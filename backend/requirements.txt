@@ -1,2 +1,7 @@
-# backend dependencies
-
+fastapi
+uvicorn
+python-dotenv
+python-dateutil
+google-genai
+numpy
+faiss-cpu
