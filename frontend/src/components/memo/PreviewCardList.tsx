@@ -1,27 +1,37 @@
 import { useMutation } from "@tanstack/react-query";
 import { useMemoStore, type DraftEvent } from "@/stores/memoStore";
 import { useScheduleStore } from "@/stores/scheduleStore";
-import {
-  ScheduleConflictError,
-  createSchedules,
-} from "@/services/scheduleApi";
+import { scheduleApi } from "@/services";
 import { useToast } from "@/hooks/useToast";
-import type { ApprovedEvent } from "@/types/api";
+import { isApiError, type CreateScheduleEventInput, type EventType } from "@/types/api";
 import { EventCard } from "./EventCard";
 
-function toApprovedEvent(draft: DraftEvent): ApprovedEvent {
+const DEFAULT_ALERT_MIN: Record<EventType, number> = {
+  meeting: 10,
+  deadline: 1440,
+  event: 10,
+  other: 10,
+};
+
+function toEventInput(
+  draft: DraftEvent,
+  noteId: string,
+): CreateScheduleEventInput {
   const participants = draft.participantsText
     .split(",")
     .map((value) => value.trim())
     .filter(Boolean);
   return {
-    temp_id: draft.temp_id,
     title: draft.title,
     date: draft.date,
-    time: draft.isAllDay ? null : draft.time ?? null,
-    duration_min: draft.isAllDay ? null : draft.duration_min ?? null,
+    is_all_day: draft.is_all_day,
+    start_time: draft.is_all_day ? null : draft.start_time,
+    end_time: draft.is_all_day ? null : draft.end_time,
     type: draft.type,
     participants,
+    location: draft.location,
+    alert_minutes_before: DEFAULT_ALERT_MIN[draft.type],
+    source_note_id: noteId,
   };
 }
 
@@ -37,19 +47,22 @@ export function PreviewCardList() {
   const mutation = useMutation({
     mutationFn: async () => {
       if (!noteId) throw new Error("note_id가 없습니다");
-      return createSchedules(noteId, visibleDrafts.map(toApprovedEvent));
+      const events = visibleDrafts.map((draft) => toEventInput(draft, noteId));
+      return scheduleApi.create({ events });
     },
-    onSuccess: (schedules) => {
-      setRecentlyCreated(schedules);
+    onSuccess: (response) => {
+      setRecentlyCreated(response.schedules);
+      if (response.failed.length > 0) {
+        showToast(
+          `${response.failed.length}개 일정의 캘린더 동기화에 실패했어요`,
+        );
+      }
       setStep(3);
     },
     onError: (error: unknown) => {
-      if (error instanceof ScheduleConflictError) {
-        showToast("아직 충돌 중인 일정이 있어요");
-        return;
-      }
-      const message =
-        error instanceof Error ? error.message : "일정 등록에 실패했어요";
+      const message = isApiError(error)
+        ? error.error.message
+        : "일정 등록에 실패했어요";
       showToast(message);
     },
   });

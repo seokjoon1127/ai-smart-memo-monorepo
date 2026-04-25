@@ -1,8 +1,8 @@
 import { useNavigate } from "react-router-dom";
-import type { RelatedNote } from "@/types/api";
+import type { RelatedDoc } from "@/types/api";
 
 interface Props {
-  note: RelatedNote;
+  doc: RelatedDoc;
 }
 
 function shortDate(iso: string): string {
@@ -11,7 +11,7 @@ function shortDate(iso: string): string {
   return `${d.getMonth() + 1}/${d.getDate()}`;
 }
 
-export function RelatedDocCard({ note }: Props) {
+export function RelatedDocCard({ doc }: Props) {
   const navigate = useNavigate();
   return (
     <button
@@ -20,14 +20,12 @@ export function RelatedDocCard({ note }: Props) {
       className="w-full text-left bg-toss-gray-25 rounded-lg p-3 mb-1.5 hover:bg-toss-blue-50 transition"
     >
       <div className="flex items-center justify-between mb-1">
-        <p className="text-sm font-medium">📄 메모 #{note.note_id}</p>
+        <p className="text-sm font-medium">📄 {doc.title}</p>
         <span className="text-xs text-toss-gray-400">
-          {shortDate(note.created_at)}
+          {shortDate(doc.created_at)}
         </span>
       </div>
-      <p className="text-xs text-toss-gray-500 line-clamp-1">
-        {note.content}
-      </p>
+      <p className="text-xs text-toss-gray-500 line-clamp-1">{doc.preview}</p>
     </button>
   );
 }

@@ -76,23 +76,8 @@ function StepThree() {
         각 일정에 ShareBox의 관련 문서가 자동으로 연결됐어요
       </p>
 
-      {recentlyCreated.map((schedule, index) => (
-        <ScheduleResultCard
-          key={schedule.id}
-          schedule={schedule}
-          suggestion={
-            index === 0
-              ? {
-                  title: "QA 킥오프 미팅",
-                  isoDate: "2026-04-28",
-                  category: "프로젝트",
-                  categoryClass: "bg-toss-purple-bg text-toss-purple",
-                  description:
-                    "이번 회의 후 <span class=\"font-medium\">QA 킥오프 미팅 (4/28)</span>을 만들까요?",
-                }
-              : undefined
-          }
-        />
+      {recentlyCreated.map((schedule) => (
+        <ScheduleResultCard key={schedule.id} schedule={schedule} />
       ))}
 
       <button

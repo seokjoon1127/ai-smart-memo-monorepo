@@ -1,19 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
 import type { EventType, Schedule } from "@/types/api";
-import { getScheduleDetail } from "@/services/scheduleApi";
+import { scheduleApi } from "@/services";
 import { formatDateKo, formatTimeKo } from "@/utils/date";
 import { RelatedDocCard } from "./RelatedDocCard";
 import { SuggestionBox } from "./SuggestionBox";
 
 interface Props {
   schedule: Schedule;
-  suggestion?: {
-    title: string;
-    isoDate: string;
-    category: string;
-    categoryClass: string;
-    description: string;
-  };
 }
 
 const typeBadge: Record<EventType, { label: string; className: string }> = {
@@ -35,15 +28,18 @@ const typeBadge: Record<EventType, { label: string; className: string }> = {
   },
 };
 
-export function ScheduleResultCard({ schedule, suggestion }: Props) {
+export function ScheduleResultCard({ schedule }: Props) {
   const detailQuery = useQuery({
     queryKey: ["schedule", schedule.id],
-    queryFn: () => getScheduleDetail(schedule.id),
+    queryFn: () => scheduleApi.getDetail(schedule.id),
     staleTime: 60_000,
   });
 
   const detail = detailQuery.data;
   const badge = typeBadge[schedule.type];
+  const timeText = schedule.is_all_day
+    ? "종일"
+    : formatTimeKo(schedule.start_time);
 
   return (
     <div className="bg-white rounded-2xl border border-toss-gray-100 p-6 mb-4">
@@ -58,7 +54,7 @@ export function ScheduleResultCard({ schedule, suggestion }: Props) {
           </div>
           <h3 className="text-xl font-bold mb-1">{schedule.title}</h3>
           <p className="text-sm text-toss-gray-500">
-            {formatDateKo(schedule.date)} · {formatTimeKo(schedule.time)}
+            {formatDateKo(schedule.date)} · {timeText}
           </p>
         </div>
         <button
@@ -72,12 +68,22 @@ export function ScheduleResultCard({ schedule, suggestion }: Props) {
       <div className="grid grid-cols-2 gap-2 mb-4">
         <div className="bg-toss-gray-25 rounded-lg p-3">
           <p className="text-xs text-toss-gray-500 mb-1">참석자</p>
-          <p className="text-sm font-medium text-toss-gray-300">미설정</p>
+          <p
+            className={`text-sm font-medium ${
+              schedule.participants.length === 0 ? "text-toss-gray-300" : ""
+            }`}
+          >
+            {schedule.participants.length === 0
+              ? "미설정"
+              : schedule.participants.join(", ")}
+          </p>
         </div>
         <div className="bg-toss-gray-25 rounded-lg p-3">
           <p className="text-xs text-toss-gray-500 mb-1">알림</p>
           <p className="text-sm font-medium">
-            {schedule.type === "deadline" ? "1일 전" : "10분 전"}
+            {schedule.alert_minutes_before >= 1440
+              ? `${Math.round(schedule.alert_minutes_before / 1440)}일 전`
+              : `${schedule.alert_minutes_before}분 전`}
           </p>
         </div>
       </div>
@@ -98,29 +104,20 @@ export function ScheduleResultCard({ schedule, suggestion }: Props) {
           </div>
         )}
 
-        {detail && detail.related_notes.length === 0 && (
+        {detail && detail.related_docs.length === 0 && (
           <div className="bg-toss-gray-25 rounded-lg p-3 text-xs text-toss-gray-400">
             연관 문서가 없어요.
           </div>
         )}
 
-        {detail?.related_notes.map((note) => (
-          <RelatedDocCard key={note.note_id} note={note} />
+        {detail?.related_docs.map((doc) => (
+          <RelatedDocCard key={doc.doc_id} doc={doc} />
         ))}
-
-        {detail?.rag_summary && (
-          <div className="mt-2 bg-toss-purple-bg rounded-lg p-3">
-            <p className="text-[11px] text-toss-purple font-medium mb-1">
-              ✨ RAG 요약
-            </p>
-            <p className="text-xs text-toss-gray-700 leading-relaxed">
-              {detail.rag_summary.summary}
-            </p>
-          </div>
-        )}
       </div>
 
-      {suggestion && <SuggestionBox suggestion={suggestion} />}
+      {detail?.ai_suggestion && (
+        <SuggestionBox suggestion={detail.ai_suggestion} />
+      )}
     </div>
   );
 }

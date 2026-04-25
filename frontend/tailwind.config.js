@@ -1,20 +1,8 @@
 /** @type {import('tailwindcss').Config} */
 export default {
-  content: ["./index.html", "./src/**/*.{ts,tsx}"],
+  content: ["./index.html", "./src/**/*.{js,ts,jsx,tsx}"],
   theme: {
     extend: {
-      fontFamily: {
-        sans: [
-          "Pretendard",
-          "-apple-system",
-          "BlinkMacSystemFont",
-          "system-ui",
-          "sans-serif",
-        ],
-      },
-      letterSpacing: {
-        tossy: "-0.02em",
-      },
       colors: {
         toss: {
           blue: "#3182F6",
@@ -40,6 +28,15 @@ export default {
           purple: "#8B5CF6",
           "purple-bg": "#F4F0FF",
         },
+      },
+      fontFamily: {
+        pretendard: [
+          "Pretendard",
+          "-apple-system",
+          "BlinkMacSystemFont",
+          "system-ui",
+          "sans-serif",
+        ],
       },
     },
   },

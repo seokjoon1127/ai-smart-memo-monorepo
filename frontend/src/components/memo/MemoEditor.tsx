@@ -1,7 +1,8 @@
 import { useMutation } from "@tanstack/react-query";
 import { useMemoStore } from "@/stores/memoStore";
-import { createNote, parseNote } from "@/services/memoApi";
+import { memoApi } from "@/services";
 import { useToast } from "@/hooks/useToast";
+import { isApiError } from "@/types/api";
 
 export function MemoEditor() {
   const content = useMemoStore((s) => s.content);
@@ -11,16 +12,17 @@ export function MemoEditor() {
 
   const mutation = useMutation({
     mutationFn: async () => {
-      const note = await createNote(content);
-      const result = await parseNote(note.id);
+      const note = await memoApi.create({ content });
+      const result = await memoApi.parse(note.id);
       return { noteId: note.id, result };
     },
     onSuccess: ({ noteId, result }) => {
       setParseResult(noteId, result);
     },
     onError: (error: unknown) => {
-      const message =
-        error instanceof Error ? error.message : "파싱에 실패했어요";
+      const message = isApiError(error)
+        ? error.error.message
+        : "파싱에 실패했어요";
       showToast(message);
     },
   });

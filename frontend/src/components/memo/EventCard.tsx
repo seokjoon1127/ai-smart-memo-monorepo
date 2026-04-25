@@ -5,50 +5,65 @@ interface Props {
   draft: DraftEvent;
 }
 
+const DEFAULT_START = "09:00";
+const DEFAULT_DURATION_MIN = 60;
+
 export function EventCard({ draft }: Props) {
   const updateDraft = useMemoStore((s) => s.updateDraft);
   const removeDraft = useMemoStore((s) => s.removeDraft);
 
   const handleAllDayToggle = () => {
-    const next = !draft.isAllDay;
-    updateDraft(draft.temp_id, {
-      isAllDay: next,
-      time: next ? null : draft.time ?? "09:00",
-      duration_min: next ? null : draft.duration_min ?? 60,
-      endTime: next
-        ? null
-        : draft.endTime ?? addMinutesToTime(draft.time ?? "09:00", 60),
-    });
+    const next = !draft.is_all_day;
+    if (next) {
+      updateDraft(draft.temp_id, {
+        is_all_day: true,
+        start_time: null,
+        end_time: null,
+      });
+    } else {
+      const start = draft.start_time ?? DEFAULT_START;
+      const end =
+        draft.end_time ?? addMinutesToTime(start, DEFAULT_DURATION_MIN);
+      updateDraft(draft.temp_id, {
+        is_all_day: false,
+        start_time: start,
+        end_time: end,
+      });
+    }
   };
 
   const handleStartChange = (value: string) => {
-    const start = value || "09:00";
-    const duration = draft.duration_min ?? 60;
-    updateDraft(draft.temp_id, {
-      time: start,
-      endTime: addMinutesToTime(start, duration),
-    });
+    if (!value) return;
+    // Preserve the existing duration when shifting start_time.
+    if (draft.start_time && draft.end_time) {
+      const duration = diffMinutes(draft.start_time, draft.end_time);
+      updateDraft(draft.temp_id, {
+        start_time: value,
+        end_time: addMinutesToTime(value, duration),
+      });
+    } else {
+      updateDraft(draft.temp_id, { start_time: value });
+    }
   };
 
   const handleEndChange = (value: string) => {
-    if (!draft.time || !value) return;
-    const duration = diffMinutes(draft.time, value);
-    updateDraft(draft.temp_id, {
-      endTime: value,
-      duration_min: duration > 0 ? duration : draft.duration_min,
-    });
+    updateDraft(draft.temp_id, { end_time: value || null });
   };
 
   const handleApplySuggestion = (suggestion: string) => {
-    const duration = draft.duration_min ?? 60;
-    updateDraft(draft.temp_id, {
-      time: suggestion,
-      endTime: addMinutesToTime(suggestion, duration),
-    });
+    if (draft.start_time && draft.end_time) {
+      const duration = diffMinutes(draft.start_time, draft.end_time);
+      updateDraft(draft.temp_id, {
+        start_time: suggestion,
+        end_time: addMinutesToTime(suggestion, duration),
+      });
+    } else {
+      updateDraft(draft.temp_id, { start_time: suggestion });
+    }
   };
 
   const conflict = draft.conflict;
-  const hasConflict = conflict.has_conflict && !draft.isAllDay;
+  const hasConflict = conflict.has_conflict && !draft.is_all_day;
 
   return (
     <div className="bg-white rounded-2xl border border-toss-gray-100 p-6 mb-3">
@@ -81,7 +96,7 @@ export function EventCard({ draft }: Props) {
           <input
             type="checkbox"
             className="sr-only peer"
-            checked={draft.isAllDay}
+            checked={draft.is_all_day}
             onChange={handleAllDayToggle}
           />
           <div className="w-11 h-6 bg-toss-gray-200 peer-checked:bg-toss-blue rounded-full peer transition-all relative">
@@ -92,7 +107,7 @@ export function EventCard({ draft }: Props) {
 
       <div
         className={`grid grid-cols-2 gap-2 mb-2 ${
-          draft.isAllDay ? "opacity-50 pointer-events-none" : ""
+          draft.is_all_day ? "opacity-50 pointer-events-none" : ""
         }`}
       >
         <div>
@@ -101,7 +116,7 @@ export function EventCard({ draft }: Props) {
           </label>
           <input
             type="time"
-            value={draft.time ?? ""}
+            value={draft.start_time ?? ""}
             onChange={(event) => handleStartChange(event.target.value)}
             className="w-full px-3 py-2 text-sm border border-toss-gray-200 rounded-lg outline-none focus:border-toss-blue"
           />
@@ -112,7 +127,7 @@ export function EventCard({ draft }: Props) {
           </label>
           <input
             type="time"
-            value={draft.endTime ?? ""}
+            value={draft.end_time ?? ""}
             onChange={(event) => handleEndChange(event.target.value)}
             className="w-full px-3 py-2 text-sm border border-toss-gray-200 rounded-lg outline-none focus:border-toss-blue"
           />
@@ -126,9 +141,11 @@ export function EventCard({ draft }: Props) {
         <input
           type="text"
           placeholder="예: 3층 회의실"
-          value={draft.location}
+          value={draft.location ?? ""}
           onChange={(event) =>
-            updateDraft(draft.temp_id, { location: event.target.value })
+            updateDraft(draft.temp_id, {
+              location: event.target.value || null,
+            })
           }
           className="w-full px-3 py-2 text-sm border border-toss-gray-200 rounded-lg outline-none focus:border-toss-blue placeholder:text-toss-gray-300"
         />

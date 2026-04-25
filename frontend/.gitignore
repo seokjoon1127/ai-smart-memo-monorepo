@@ -1,19 +1,29 @@
-node_modules
-dist
-dist-ssr
-dist-types
-*.tsbuildinfo
-*.local
-.env.local
-.vite
+# Dependencies
+node_modules/
 
-# editor
-.vscode/*
-!.vscode/extensions.json
-.idea
+# Build
+dist/
+build/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Editor
+.vscode/
+.idea/
+
+# OS
 .DS_Store
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.sw?
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Test
+coverage/
+
+# Cache
+.vite/
