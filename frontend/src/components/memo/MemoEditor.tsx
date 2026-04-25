@@ -68,9 +68,6 @@ export function MemoEditor() {
         {isLoading ? "AI가 파싱 중이에요..." : "AI 파싱 시작"}
       </button>
 
-      <p className="text-xs text-toss-gray-400 text-center mt-4">
-        메모는 자동으로 ShareBox(RAG 지식 베이스)에 저장됩니다
-      </p>
     </div>
   );
 }
