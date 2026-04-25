@@ -1,0 +1,19 @@
+node_modules
+dist
+dist-ssr
+dist-types
+*.tsbuildinfo
+*.local
+.env.local
+.vite
+
+# editor
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
