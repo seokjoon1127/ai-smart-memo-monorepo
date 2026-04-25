@@ -78,75 +78,6 @@
 ![Testing Library](https://img.shields.io/badge/Testing_Library-E33332?style=for-the-badge&logo=testinglibrary&logoColor=white)
 ![jsdom](https://img.shields.io/badge/jsdom-F7DF1E?style=for-the-badge&logoColor=black)
 
-## 빠른 시작
-
-### 사전 요구
-
-- Node.js 18+
-- Python 3.10+
-- Gemini API 키 (백엔드 실행 시 필수, [Google AI Studio](https://aistudio.google.com)에서 발급)
-
-### 1. 저장소 클론 + 의존성 설치
-
-```bash
-git clone <repo-url>
-cd ai-smart-memo-monorepo
-
-# 백엔드
-cd backend
-python -m venv .venv
-source .venv/bin/activate     # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-cd ..
-
-# 프론트엔드
-cd frontend
-npm install
-cd ..
-```
-
-### 2. 환경 변수 설정
-
-**`backend/.env`** (예시):
-
-```env
-GEMINI_API_KEY=your_gemini_api_key_here
-GCAL_ENABLED=false
-# 선택 (GCAL_ENABLED=true일 때만)
-# GOOGLE_SERVICE_ACCOUNT_JSON_PATH=./gcal_credentials.json
-# GOOGLE_CALENDAR_ID=primary
-```
-
-**`frontend/.env.local`** (이미 기본값 설정됨):
-
-```env
-VITE_API_BASE_URL=http://localhost:8000/api
-VITE_USE_MOCK=false
-```
-
-> 💡 **백엔드 없이 데모만 보고 싶다면** `VITE_USE_MOCK=true`로 두세요. 모든 API가
-> 메모리 기반 mock으로 동작 (`frontend/src/services/mock.ts`).
-
-### 3. 실행
-
-**터미널 1 — 백엔드** (`http://localhost:8000`):
-
-```bash
-cd backend
-uvicorn main:app --reload
-```
-
-**터미널 2 — 프론트엔드** (`http://localhost:5173`):
-
-```bash
-cd frontend
-npm run dev
-```
-
-브라우저에서 `http://localhost:5173`로 진입.
-
----
-
 ## 프로젝트 구조
 
 ```
@@ -178,8 +109,6 @@ ai-smart-memo-monorepo/
 └── README.md
 ```
 
----
-
 ## API 문서
 
 전체 명세는 **[`api_contract.md`](./api_contract.md)** 참고.
@@ -200,67 +129,3 @@ ai-smart-memo-monorepo/
 | 12  | POST   | `/api/suggestions/{id}/accept`   | AI 제안 수락 → 일정 등록                |
 
 모든 응답은 JSON. 에러는 `{"error": {"code", "message", "detail?"}}` 형태로 통일.
-
----
-
-## 개발 명령
-
-### 프론트엔드
-
-```bash
-cd frontend
-npm run dev          # Vite 개발 서버 (http://localhost:5173)
-npm run build        # 프로덕션 빌드 (tsc + vite build)
-npm run typecheck    # 타입 체크만
-npm test             # Vitest watch
-npm test -- --run    # Vitest 1회 실행
-npm run test:ui      # Vitest UI (브라우저)
-```
-
-### 백엔드
-
-```bash
-cd backend
-uvicorn main:app --reload       # 개발 서버 (자동 리로드)
-pytest                          # 테스트 실행
-pytest -k "parse"               # 특정 키워드 테스트만
-```
-
----
-
-## Mock 모드 / 시연 안전망
-
-발표 직전 백엔드 장애 또는 Gemini API 할당량 초과 등에 대비, 프론트엔드는 **30초 안에
-Mock 모드로 전환 가능**합니다.
-
-```bash
-# frontend/.env.local 수정
-VITE_USE_MOCK=true
-
-# dev 서버 재시작
-npm run dev
-```
-
-Mock 모드에서는 모든 API가 `frontend/src/services/mock.ts`의 in-memory 구현으로
-동작합니다. 시연 시나리오 A/B/C 모두 정상 동작 + LLM 호출 없이 즉시 응답.
-
-> 단, 새로고침 시 in-memory 상태(노트, 신규 등록 일정)는 초기화됩니다. 캘린더에는
-> seed schedules 13건이 항상 표시됩니다.
-
----
-
-## 트러블슈팅
-
-| 증상                          | 원인 / 조치                                                                            |
-| ----------------------------- | -------------------------------------------------------------------------------------- |
-| 프론트 콘솔 `Failed to fetch` | 백엔드 미기동 → `cd backend && uvicorn main:app --reload`. 또는 Mock 모드로 전환       |
-| `LLM_PARSE_FAILED` (HTTP 422) | Gemini API 키 미설정 또는 할당량 초과. `.env`의 `GEMINI_API_KEY` 확인                  |
-| 캘린더가 비어있음             | 백엔드 첫 부팅 시 seed 미주입. `data/app.db` 삭제 후 재시작 (자동 seed)                |
-| CORS 에러                     | 백엔드의 CORS 미들웨어가 `http://localhost:5173`을 허용해야 함. `backend/main.py` 확인 |
-| 포트 충돌 (5173, 8000)        | `npx kill-port 5173` 또는 다른 포트로 변경                                             |
-
----
-
-## 라이선스
-
-NextWave 공모전 출품작. 라이선스 정책은 추후 결정.
