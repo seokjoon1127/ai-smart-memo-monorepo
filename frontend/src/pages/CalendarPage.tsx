@@ -1,9 +1,21 @@
+import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { DemoHeader } from "@/components/shell/DemoHeader";
 import { CalendarGrid } from "@/components/calendar/CalendarGrid";
+import { useScheduleStore } from "@/stores/scheduleStore";
+
+const FROM = "2026-04-01";
+const TO = "2026-04-30";
 
 export function CalendarPage() {
   const navigate = useNavigate();
+  const calendarEvents = useScheduleStore((s) => s.calendarEvents);
+  const fetchCalendarEvents = useScheduleStore((s) => s.fetchCalendarEvents);
+
+  useEffect(() => {
+    void fetchCalendarEvents(FROM, TO);
+  }, [fetchCalendarEvents]);
+
   return (
     <div>
       <DemoHeader
@@ -78,7 +90,7 @@ export function CalendarPage() {
             </div>
             <div className="flex items-center gap-1.5">
               <span className="w-2.5 h-2.5 bg-toss-purple rounded-sm" />
-              <span className="text-toss-gray-600">프로젝트</span>
+              <span className="text-toss-gray-600">이벤트</span>
             </div>
             <div className="flex items-center gap-1.5">
               <span className="w-2.5 h-2.5 bg-toss-warning rounded-sm" />
@@ -86,12 +98,12 @@ export function CalendarPage() {
             </div>
             <div className="flex items-center gap-1.5">
               <span className="w-2.5 h-2.5 bg-toss-success rounded-sm" />
-              <span className="text-toss-gray-600">개인</span>
+              <span className="text-toss-gray-600">기타</span>
             </div>
           </div>
         </div>
 
-        <CalendarGrid />
+        <CalendarGrid events={calendarEvents} />
       </div>
     </div>
   );

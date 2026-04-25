@@ -1,5 +1,5 @@
 import { DemoHeader } from "@/components/shell/DemoHeader";
-import { mockCollabNotes } from "@/data/mockNotes";
+import { mockNotesList } from "@/data/mockNotesList";
 
 export function NotesPage() {
   return (
@@ -19,7 +19,7 @@ export function NotesPage() {
 
       <div className="px-10 py-8">
         <div className="grid grid-cols-3 gap-4">
-          {mockCollabNotes.map((note) => (
+          {mockNotesList.map((note) => (
             <div
               key={note.id}
               className="bg-white rounded-xl p-5 border border-toss-gray-100 hover:border-toss-blue transition cursor-pointer"

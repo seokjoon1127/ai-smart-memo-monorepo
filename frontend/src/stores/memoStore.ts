@@ -1,67 +1,81 @@
 import { create } from "zustand";
-import type { ParseResponse, ParsedEvent } from "@/types/api";
+import { isApiError, type ParsedEvent } from "@/types/api";
+import { memoApi } from "@/services";
+import { useUiStore } from "./uiStore";
 
 export type MemoStep = 1 | 2 | 3;
-
-export interface DraftEvent extends ParsedEvent {
-  participantsText: string;
-  removed: boolean;
-}
+export type MemoStatus = "idle" | "parsing" | "ready" | "error";
 
 interface MemoState {
   step: MemoStep;
+  status: MemoStatus;
   content: string;
   noteId: string | null;
-  parseResult: ParseResponse | null;
-  drafts: DraftEvent[];
+  parsedEvents: ParsedEvent[];
+  errorMessage: string | null;
   setStep: (step: MemoStep) => void;
   setContent: (content: string) => void;
-  setParseResult: (noteId: string, result: ParseResponse) => void;
-  updateDraft: (tempId: string, patch: Partial<DraftEvent>) => void;
-  removeDraft: (tempId: string) => void;
+  saveAndParse: () => Promise<void>;
+  updateEventField: (tempId: string, patch: Partial<ParsedEvent>) => void;
+  removeEvent: (tempId: string) => void;
   reset: () => void;
 }
 
-function buildDrafts(events: ParsedEvent[]): DraftEvent[] {
-  return events.map((event) => ({
-    ...event,
-    participantsText: event.participants.join(", "),
-    removed: false,
-  }));
-}
+const DEFAULT_CONTENT = "내일 3시 김팀장 회의, 금요일까지 보고서 제출";
 
-export const useMemoStore = create<MemoState>((set) => ({
+export const useMemoStore = create<MemoState>((set, get) => ({
   step: 1,
-  content: "내일 3시 김팀장 회의, 금요일까지 보고서 제출",
+  status: "idle",
+  content: DEFAULT_CONTENT,
   noteId: null,
-  parseResult: null,
-  drafts: [],
+  parsedEvents: [],
+  errorMessage: null,
+
   setStep: (step) => set({ step }),
   setContent: (content) => set({ content }),
-  setParseResult: (noteId, result) =>
-    set({
-      noteId,
-      parseResult: result,
-      drafts: buildDrafts(result.events),
-      step: 2,
-    }),
-  updateDraft: (tempId, patch) =>
+
+  saveAndParse: async () => {
+    const content = get().content.trim();
+    if (!content) return;
+    set({ status: "parsing", errorMessage: null });
+    try {
+      const note = await memoApi.create({ content });
+      const result = await memoApi.parse(note.id);
+      set({
+        noteId: note.id,
+        parsedEvents: result.events,
+        status: "ready",
+        step: 2,
+      });
+    } catch (error) {
+      const message = isApiError(error)
+        ? error.error.message
+        : "파싱에 실패했어요";
+      set({ status: "error", errorMessage: message });
+      useUiStore.getState().showToast(message);
+    }
+  },
+
+  updateEventField: (tempId, patch) =>
     set((state) => ({
-      drafts: state.drafts.map((draft) =>
-        draft.temp_id === tempId ? { ...draft, ...patch } : draft,
+      parsedEvents: state.parsedEvents.map((event) =>
+        event.temp_id === tempId ? { ...event, ...patch } : event,
       ),
     })),
-  removeDraft: (tempId) =>
+
+  removeEvent: (tempId) =>
     set((state) => ({
-      drafts: state.drafts.map((draft) =>
-        draft.temp_id === tempId ? { ...draft, removed: true } : draft,
+      parsedEvents: state.parsedEvents.filter(
+        (event) => event.temp_id !== tempId,
       ),
     })),
+
   reset: () =>
     set({
       step: 1,
+      status: "idle",
       noteId: null,
-      parseResult: null,
-      drafts: [],
+      parsedEvents: [],
+      errorMessage: null,
     }),
 }));

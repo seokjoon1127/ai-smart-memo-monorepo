@@ -1,11 +1,16 @@
 import {
-  categoryColor,
-  categoryLabel,
-  type ShareBoxDoc,
-} from "@/data/mockDocs";
+  docCategoryColor,
+  docCategoryLabel,
+} from "@/data/mockShareBox";
+import type { ShareDoc } from "@/types/api";
 
 interface Props {
-  doc: ShareBoxDoc;
+  doc: ShareDoc;
+}
+
+function shortDate(iso: string): string {
+  // "2026-04-16T10:00:00+09:00" → "04/16"
+  return iso.slice(5, 10).replace("-", "/");
 }
 
 export function ShareDocCard({ doc }: Props) {
@@ -14,14 +19,14 @@ export function ShareDocCard({ doc }: Props) {
       <div className="flex items-start justify-between mb-2">
         <div className="flex items-center gap-2 flex-1 min-w-0">
           <span
-            className={`text-xs px-2 py-0.5 rounded font-medium shrink-0 ${categoryColor[doc.category]}`}
+            className={`text-xs px-2 py-0.5 rounded font-medium shrink-0 ${docCategoryColor[doc.category]}`}
           >
-            {categoryLabel[doc.category]}
+            {docCategoryLabel[doc.category]}
           </span>
           <h3 className="font-medium truncate">{doc.title}</h3>
         </div>
         <span className="text-xs text-toss-gray-400 shrink-0 ml-2">
-          {doc.date.slice(5).replace("-", "/")}
+          {shortDate(doc.created_at)}
         </span>
       </div>
       <p className="text-sm text-toss-gray-500 mb-3 line-clamp-1">

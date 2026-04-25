@@ -1,9 +1,20 @@
+import { useEffect } from "react";
 import { useUiStore } from "@/stores/uiStore";
 import { formatDateKo } from "@/utils/date";
 
 export function ConfirmModal() {
   const modal = useUiStore((s) => s.modal);
   const close = useUiStore((s) => s.closeConfirmModal);
+
+  useEffect(() => {
+    if (!modal) return;
+    const handler = (event: KeyboardEvent) => {
+      if (event.key === "Escape") close();
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [modal, close]);
+
   if (!modal) return null;
 
   const handleConfirm = () => {

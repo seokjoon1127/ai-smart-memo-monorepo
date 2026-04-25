@@ -1,5 +1,6 @@
 import { useNavigate } from "react-router-dom";
 import { useUiStore } from "@/stores/uiStore";
+import { useScheduleStore } from "@/stores/scheduleStore";
 import { useToast } from "@/hooks/useToast";
 import type { Suggestion, SuggestionType } from "@/types/api";
 
@@ -27,6 +28,7 @@ interface Props {
 
 export function SuggestionBox({ suggestion }: Props) {
   const openConfirmModal = useUiStore((s) => s.openConfirmModal);
+  const acceptSuggestion = useScheduleStore((s) => s.acceptSuggestion);
   const showToast = useToast();
   const navigate = useNavigate();
   const meta = typeMeta[suggestion.type];
@@ -37,11 +39,14 @@ export function SuggestionBox({ suggestion }: Props) {
       isoDate: suggestion.suggested_date,
       category: meta.category,
       categoryClass: meta.categoryClass,
-      onConfirm: () => {
-        showToast(`'${suggestion.title}' 일정이 등록됐어요`, {
-          label: "캘린더 보기",
-          onClick: () => navigate("/calendar"),
-        });
+      onConfirm: async () => {
+        const created = await acceptSuggestion(suggestion.suggestion_id);
+        if (created) {
+          showToast(`'${suggestion.title}' 일정이 등록됐어요`, {
+            label: "캘린더 보기",
+            onClick: () => navigate("/calendar"),
+          });
+        }
       },
     });
   };

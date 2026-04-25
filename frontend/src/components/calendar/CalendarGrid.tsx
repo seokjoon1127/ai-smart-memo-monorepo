@@ -1,22 +1,47 @@
-import {
-  mockCalendarEvents,
-  pillClass,
-  type CalendarPill,
-} from "@/data/mockEvents";
+import type { EventType, Schedule } from "@/types/api";
 
-const FIRST_WEEKDAY = 3;
+const FIRST_WEEKDAY = 3; // 2026-04-01은 수요일
 const DAYS_IN_MONTH = 30;
 const TODAY = 25;
 const PREV_DAYS = [29, 30, 31];
 
-function buildCells(): {
+const pillClassByType: Record<EventType, string> = {
+  meeting: "bg-toss-blue-light text-[#1B64DA]",
+  deadline: "bg-toss-warning-bg text-[#C2410C]",
+  event: "bg-toss-purple-bg text-[#6D28D9]",
+  other: "bg-toss-success-bg text-[#137333]",
+};
+
+interface Props {
+  events: Schedule[];
+}
+
+function dayOf(dateStr: string): number {
+  // "2026-04-23" → 23
+  return Number(dateStr.slice(8, 10));
+}
+
+function groupByDay(events: Schedule[]): Record<number, Schedule[]> {
+  const map: Record<number, Schedule[]> = {};
+  for (const event of events) {
+    const day = dayOf(event.date);
+    if (Number.isNaN(day)) continue;
+    if (!map[day]) map[day] = [];
+    map[day].push(event);
+  }
+  return map;
+}
+
+interface Cell {
   day: number;
   isOtherMonth: boolean;
   isToday: boolean;
   weekday: number;
-  events: CalendarPill[];
-}[] {
-  const cells: ReturnType<typeof buildCells> = [];
+  events: Schedule[];
+}
+
+function buildCells(byDay: Record<number, Schedule[]>): Cell[] {
+  const cells: Cell[] = [];
   for (let i = 0; i < FIRST_WEEKDAY; i += 1) {
     cells.push({
       day: PREV_DAYS[i],
@@ -33,7 +58,7 @@ function buildCells(): {
       isOtherMonth: false,
       isToday: d === TODAY,
       weekday,
-      events: mockCalendarEvents[d] ?? [],
+      events: byDay[d] ?? [],
     });
   }
   const remaining = (7 - (cells.length % 7)) % 7;
@@ -52,8 +77,10 @@ function buildCells(): {
 const cellBase =
   "bg-white min-h-[110px] p-2 cursor-pointer transition hover:bg-toss-gray-25";
 
-export function CalendarGrid() {
-  const cells = buildCells();
+export function CalendarGrid({ events }: Props) {
+  const byDay = groupByDay(events);
+  const cells = buildCells(byDay);
+
   return (
     <>
       <div className="grid grid-cols-7 gap-px mb-1 bg-white rounded-t-xl overflow-hidden">
@@ -100,10 +127,11 @@ export function CalendarGrid() {
               ) : (
                 <span className={`text-sm ${dayColor}`}>{cell.day}</span>
               )}
-              {cell.events.slice(0, 3).map((event, i) => (
+              {cell.events.slice(0, 3).map((event) => (
                 <div
-                  key={i}
-                  className={`text-[11px] px-1.5 py-0.5 rounded mt-1 truncate ${pillClass[event.type]}`}
+                  key={event.id}
+                  className={`text-[11px] px-1.5 py-0.5 rounded mt-1 truncate ${pillClassByType[event.type]}`}
+                  title={event.title}
                 >
                   {event.title}
                 </div>

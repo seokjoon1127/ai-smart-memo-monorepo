@@ -29,8 +29,9 @@ describe('mockApi structure', () => {
     expect(typeof mockApi.suggestion.accept).toBe('function')
   })
 
-  it('throws NOT_IMPLEMENTED before being filled in', async () => {
-    await expect(mockApi.memo.list()).rejects.toThrow('not implemented')
+  it('memo.list returns an array (initially empty)', async () => {
+    const result = await mockApi.memo.list()
+    expect(Array.isArray(result)).toBe(true)
   })
 })
 

@@ -1,34 +1,14 @@
-import { useMutation } from "@tanstack/react-query";
 import { useMemoStore } from "@/stores/memoStore";
-import { memoApi } from "@/services";
-import { useToast } from "@/hooks/useToast";
-import { isApiError } from "@/types/api";
+import { demoMemoSeeds } from "@/data/mockNotes";
 
 export function MemoEditor() {
   const content = useMemoStore((s) => s.content);
   const setContent = useMemoStore((s) => s.setContent);
-  const setParseResult = useMemoStore((s) => s.setParseResult);
-  const showToast = useToast();
+  const status = useMemoStore((s) => s.status);
+  const saveAndParse = useMemoStore((s) => s.saveAndParse);
 
-  const mutation = useMutation({
-    mutationFn: async () => {
-      const note = await memoApi.create({ content });
-      const result = await memoApi.parse(note.id);
-      return { noteId: note.id, result };
-    },
-    onSuccess: ({ noteId, result }) => {
-      setParseResult(noteId, result);
-    },
-    onError: (error: unknown) => {
-      const message = isApiError(error)
-        ? error.error.message
-        : "파싱에 실패했어요";
-      showToast(message);
-    },
-  });
-
+  const isLoading = status === "parsing";
   const isEmpty = content.trim().length === 0;
-  const isLoading = mutation.isPending;
 
   return (
     <div className="max-w-3xl mx-auto">
@@ -39,6 +19,23 @@ export function MemoEditor() {
       <p className="text-base text-toss-gray-500 mb-10">
         자연어로 일정을 적으면 AI가 알아서 정리해드려요
       </p>
+
+      <div className="flex gap-2 mb-3 flex-wrap">
+        <span className="text-xs text-toss-gray-400 self-center">
+          시연 시드:
+        </span>
+        {demoMemoSeeds.map((seed) => (
+          <button
+            key={seed.id}
+            type="button"
+            onClick={() => setContent(seed.content)}
+            disabled={isLoading}
+            className="text-xs px-3 py-1.5 bg-white border border-toss-gray-200 text-toss-gray-700 rounded-full font-medium hover:border-toss-blue hover:text-toss-blue transition disabled:opacity-50"
+          >
+            {seed.label}
+          </button>
+        ))}
+      </div>
 
       <div className="bg-white rounded-2xl border border-toss-gray-100 p-6 mb-4">
         <textarea
@@ -65,7 +62,7 @@ export function MemoEditor() {
       <button
         type="button"
         disabled={isEmpty || isLoading}
-        onClick={() => mutation.mutate()}
+        onClick={() => saveAndParse()}
         className="w-full py-4 bg-toss-blue hover:bg-toss-blue-hover text-white rounded-xl font-medium text-base transition disabled:opacity-50 disabled:cursor-not-allowed"
       >
         {isLoading ? "AI가 파싱 중이에요..." : "AI 파싱 시작"}

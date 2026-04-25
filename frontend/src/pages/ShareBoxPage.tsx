@@ -1,27 +1,27 @@
-import { useMemo } from "react";
+import { useEffect } from "react";
 import { DemoHeader } from "@/components/shell/DemoHeader";
 import { SearchBar } from "@/components/sharebox/SearchBar";
 import { CategoryFilter } from "@/components/sharebox/CategoryFilter";
 import { ShareDocCard } from "@/components/sharebox/ShareDocCard";
 import { useShareBoxStore } from "@/stores/shareBoxStore";
 import { useDebounce } from "@/hooks/useDebounce";
-import { mockDocs } from "@/data/mockDocs";
 
 export function ShareBoxPage() {
+  const items = useShareBoxStore((s) => s.items);
+  const total = useShareBoxStore((s) => s.total);
   const query = useShareBoxStore((s) => s.query);
   const setQuery = useShareBoxStore((s) => s.setQuery);
   const category = useShareBoxStore((s) => s.category);
   const setCategory = useShareBoxStore((s) => s.setCategory);
+  const fetch = useShareBoxStore((s) => s.fetch);
+  const status = useShareBoxStore((s) => s.status);
 
-  const debouncedQuery = useDebounce(query, 200);
+  const debouncedQuery = useDebounce(query, 300);
 
-  const filtered = useMemo(() => {
-    let docs = mockDocs;
-    if (category !== "all") docs = docs.filter((d) => d.category === category);
-    const q = debouncedQuery.trim().toLowerCase();
-    if (q) docs = docs.filter((d) => d.title.toLowerCase().includes(q));
-    return docs;
-  }, [category, debouncedQuery]);
+  // 첫 진입 + query/category 변경 시마다 재조회 (debounce 300ms는 query에 적용)
+  useEffect(() => {
+    void fetch();
+  }, [debouncedQuery, category, fetch]);
 
   return (
     <div>
@@ -41,12 +41,16 @@ export function ShareBoxPage() {
         <SearchBar
           value={query}
           onChange={setQuery}
-          count={filtered.length}
+          count={total}
           query={debouncedQuery}
         />
         <CategoryFilter value={category} onChange={setCategory} />
 
-        {filtered.length === 0 ? (
+        {status === "fetching" && items.length === 0 ? (
+          <div className="text-center py-16 text-sm text-toss-gray-400">
+            불러오는 중...
+          </div>
+        ) : items.length === 0 ? (
           <div className="text-center py-16">
             <div className="w-16 h-16 bg-toss-gray-50 rounded-2xl flex items-center justify-center mx-auto mb-4">
               <svg
@@ -70,7 +74,7 @@ export function ShareBoxPage() {
           </div>
         ) : (
           <div className="space-y-2">
-            {filtered.map((doc) => (
+            {items.map((doc) => (
               <ShareDocCard key={doc.id} doc={doc} />
             ))}
           </div>

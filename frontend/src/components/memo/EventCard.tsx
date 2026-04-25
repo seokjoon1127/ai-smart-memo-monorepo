@@ -1,30 +1,59 @@
-import { useMemoStore, type DraftEvent } from "@/stores/memoStore";
-import { formatDateKo, addMinutesToTime, diffMinutes } from "@/utils/date";
+import { useEffect, useState } from "react";
+import { useMemoStore } from "@/stores/memoStore";
+import type { ParsedEvent } from "@/types/api";
+import { addMinutesToTime, diffMinutes, formatDateKo } from "@/utils/date";
 
 interface Props {
-  draft: DraftEvent;
+  event: ParsedEvent;
 }
 
 const DEFAULT_START = "09:00";
 const DEFAULT_DURATION_MIN = 60;
 
-export function EventCard({ draft }: Props) {
-  const updateDraft = useMemoStore((s) => s.updateDraft);
-  const removeDraft = useMemoStore((s) => s.removeDraft);
+function joinParticipants(participants: string[]): string {
+  return participants.join(", ");
+}
+
+function splitParticipants(text: string): string[] {
+  return text
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
+export function EventCard({ event }: Props) {
+  const updateEventField = useMemoStore((s) => s.updateEventField);
+  const removeEvent = useMemoStore((s) => s.removeEvent);
+
+  // 참석자만 입력 중간 상태(쉼표 분리 전 텍스트)를 컴포넌트 useState로 보관.
+  // 나머지 필드는 store(parsedEvents)가 단일 진실 공급원.
+  const [participantsText, setParticipantsText] = useState(
+    joinParticipants(event.participants),
+  );
+  useEffect(() => {
+    setParticipantsText(joinParticipants(event.participants));
+  }, [event.participants]);
+
+  const commitParticipants = () => {
+    const next = splitParticipants(participantsText);
+    if (next.join(",") !== event.participants.join(",")) {
+      updateEventField(event.temp_id, { participants: next });
+    }
+  };
 
   const handleAllDayToggle = () => {
-    const next = !draft.is_all_day;
+    const next = !event.is_all_day;
     if (next) {
-      updateDraft(draft.temp_id, {
+      updateEventField(event.temp_id, {
         is_all_day: true,
         start_time: null,
         end_time: null,
       });
     } else {
-      const start = draft.start_time ?? DEFAULT_START;
+      const start = event.start_time ?? DEFAULT_START;
       const end =
-        draft.end_time ?? addMinutesToTime(start, DEFAULT_DURATION_MIN);
-      updateDraft(draft.temp_id, {
+        event.end_time ?? addMinutesToTime(start, DEFAULT_DURATION_MIN);
+      updateEventField(event.temp_id, {
         is_all_day: false,
         start_time: start,
         end_time: end,
@@ -34,44 +63,43 @@ export function EventCard({ draft }: Props) {
 
   const handleStartChange = (value: string) => {
     if (!value) return;
-    // Preserve the existing duration when shifting start_time.
-    if (draft.start_time && draft.end_time) {
-      const duration = diffMinutes(draft.start_time, draft.end_time);
-      updateDraft(draft.temp_id, {
+    if (event.start_time && event.end_time) {
+      const duration = diffMinutes(event.start_time, event.end_time);
+      updateEventField(event.temp_id, {
         start_time: value,
         end_time: addMinutesToTime(value, duration),
       });
     } else {
-      updateDraft(draft.temp_id, { start_time: value });
+      updateEventField(event.temp_id, { start_time: value });
     }
   };
 
   const handleEndChange = (value: string) => {
-    updateDraft(draft.temp_id, { end_time: value || null });
+    updateEventField(event.temp_id, { end_time: value || null });
   };
 
   const handleApplySuggestion = (suggestion: string) => {
-    if (draft.start_time && draft.end_time) {
-      const duration = diffMinutes(draft.start_time, draft.end_time);
-      updateDraft(draft.temp_id, {
+    if (event.start_time && event.end_time) {
+      const duration = diffMinutes(event.start_time, event.end_time);
+      updateEventField(event.temp_id, {
         start_time: suggestion,
         end_time: addMinutesToTime(suggestion, duration),
       });
     } else {
-      updateDraft(draft.temp_id, { start_time: suggestion });
+      updateEventField(event.temp_id, { start_time: suggestion });
     }
   };
 
-  const conflict = draft.conflict;
-  const hasConflict = conflict.has_conflict && !draft.is_all_day;
+  const conflict = event.conflict;
+  const hasConflict = conflict.has_conflict && !event.is_all_day;
 
   return (
     <div className="bg-white rounded-2xl border border-toss-gray-100 p-6 mb-3">
       <div className="flex items-start justify-between mb-4">
         <div>
-          <h3 className="text-lg font-bold mb-1">{draft.title}</h3>
+          <h3 className="text-lg font-bold mb-1">{event.title}</h3>
           <p className="text-sm text-toss-gray-500">
-            {formatDateKo(draft.date)}
+            {formatDateKo(event.date)}
           </p>
         </div>
         {hasConflict ? (
@@ -96,7 +124,7 @@ export function EventCard({ draft }: Props) {
           <input
             type="checkbox"
             className="sr-only peer"
-            checked={draft.is_all_day}
+            checked={event.is_all_day}
             onChange={handleAllDayToggle}
           />
           <div className="w-11 h-6 bg-toss-gray-200 peer-checked:bg-toss-blue rounded-full peer transition-all relative">
@@ -107,7 +135,7 @@ export function EventCard({ draft }: Props) {
 
       <div
         className={`grid grid-cols-2 gap-2 mb-2 ${
-          draft.is_all_day ? "opacity-50 pointer-events-none" : ""
+          event.is_all_day ? "opacity-50 pointer-events-none" : ""
         }`}
       >
         <div>
@@ -116,8 +144,8 @@ export function EventCard({ draft }: Props) {
           </label>
           <input
             type="time"
-            value={draft.start_time ?? ""}
-            onChange={(event) => handleStartChange(event.target.value)}
+            value={event.start_time ?? ""}
+            onChange={(e) => handleStartChange(e.target.value)}
             className="w-full px-3 py-2 text-sm border border-toss-gray-200 rounded-lg outline-none focus:border-toss-blue"
           />
         </div>
@@ -127,8 +155,8 @@ export function EventCard({ draft }: Props) {
           </label>
           <input
             type="time"
-            value={draft.end_time ?? ""}
-            onChange={(event) => handleEndChange(event.target.value)}
+            value={event.end_time ?? ""}
+            onChange={(e) => handleEndChange(e.target.value)}
             className="w-full px-3 py-2 text-sm border border-toss-gray-200 rounded-lg outline-none focus:border-toss-blue"
           />
         </div>
@@ -141,10 +169,10 @@ export function EventCard({ draft }: Props) {
         <input
           type="text"
           placeholder="예: 3층 회의실"
-          value={draft.location ?? ""}
-          onChange={(event) =>
-            updateDraft(draft.temp_id, {
-              location: event.target.value || null,
+          value={event.location ?? ""}
+          onChange={(e) =>
+            updateEventField(event.temp_id, {
+              location: e.target.value || null,
             })
           }
           className="w-full px-3 py-2 text-sm border border-toss-gray-200 rounded-lg outline-none focus:border-toss-blue placeholder:text-toss-gray-300"
@@ -158,12 +186,9 @@ export function EventCard({ draft }: Props) {
         <input
           type="text"
           placeholder="예: 김팀장, 이수진, 박민수 (쉼표로 구분)"
-          value={draft.participantsText}
-          onChange={(event) =>
-            updateDraft(draft.temp_id, {
-              participantsText: event.target.value,
-            })
-          }
+          value={participantsText}
+          onChange={(e) => setParticipantsText(e.target.value)}
+          onBlur={commitParticipants}
           className="w-full px-3 py-2 text-sm border border-toss-gray-200 rounded-lg outline-none focus:border-toss-blue placeholder:text-toss-gray-300"
         />
       </div>
@@ -199,7 +224,7 @@ export function EventCard({ draft }: Props) {
         </button>
         <button
           type="button"
-          onClick={() => removeDraft(draft.temp_id)}
+          onClick={() => removeEvent(event.temp_id)}
           className="flex-1 py-2 bg-white border border-toss-gray-200 text-toss-gray-500 rounded-lg text-sm font-medium hover:bg-toss-gray-50"
         >
           삭제

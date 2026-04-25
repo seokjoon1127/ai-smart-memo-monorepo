@@ -1,9 +1,10 @@
-import { useMutation } from "@tanstack/react-query";
-import { useMemoStore, type DraftEvent } from "@/stores/memoStore";
+import { useMemoStore } from "@/stores/memoStore";
 import { useScheduleStore } from "@/stores/scheduleStore";
-import { scheduleApi } from "@/services";
-import { useToast } from "@/hooks/useToast";
-import { isApiError, type CreateScheduleEventInput, type EventType } from "@/types/api";
+import type {
+  CreateScheduleEventInput,
+  EventType,
+  ParsedEvent,
+} from "@/types/api";
 import { EventCard } from "./EventCard";
 
 const DEFAULT_ALERT_MIN: Record<EventType, number> = {
@@ -14,76 +15,56 @@ const DEFAULT_ALERT_MIN: Record<EventType, number> = {
 };
 
 function toEventInput(
-  draft: DraftEvent,
+  event: ParsedEvent,
   noteId: string,
 ): CreateScheduleEventInput {
-  const participants = draft.participantsText
-    .split(",")
-    .map((value) => value.trim())
-    .filter(Boolean);
   return {
-    title: draft.title,
-    date: draft.date,
-    is_all_day: draft.is_all_day,
-    start_time: draft.is_all_day ? null : draft.start_time,
-    end_time: draft.is_all_day ? null : draft.end_time,
-    type: draft.type,
-    participants,
-    location: draft.location,
-    alert_minutes_before: DEFAULT_ALERT_MIN[draft.type],
+    title: event.title,
+    date: event.date,
+    is_all_day: event.is_all_day,
+    start_time: event.is_all_day ? null : event.start_time,
+    end_time: event.is_all_day ? null : event.end_time,
+    type: event.type,
+    participants: event.participants,
+    location: event.location,
+    alert_minutes_before: DEFAULT_ALERT_MIN[event.type],
     source_note_id: noteId,
   };
 }
 
 export function PreviewCardList() {
   const noteId = useMemoStore((s) => s.noteId);
-  const drafts = useMemoStore((s) => s.drafts);
+  const parsedEvents = useMemoStore((s) => s.parsedEvents);
   const setStep = useMemoStore((s) => s.setStep);
-  const setRecentlyCreated = useScheduleStore((s) => s.setRecentlyCreated);
-  const showToast = useToast();
+  const createSchedules = useScheduleStore((s) => s.createSchedules);
+  const status = useScheduleStore((s) => s.status);
 
-  const visibleDrafts = drafts.filter((draft) => !draft.removed);
+  const isSubmitting = status === "submitting";
 
-  const mutation = useMutation({
-    mutationFn: async () => {
-      if (!noteId) throw new Error("note_id가 없습니다");
-      const events = visibleDrafts.map((draft) => toEventInput(draft, noteId));
-      return scheduleApi.create({ events });
-    },
-    onSuccess: (response) => {
-      setRecentlyCreated(response.schedules);
-      if (response.failed.length > 0) {
-        showToast(
-          `${response.failed.length}개 일정의 캘린더 동기화에 실패했어요`,
-        );
-      }
-      setStep(3);
-    },
-    onError: (error: unknown) => {
-      const message = isApiError(error)
-        ? error.error.message
-        : "일정 등록에 실패했어요";
-      showToast(message);
-    },
-  });
+  const handleCreate = async () => {
+    if (!noteId || parsedEvents.length === 0) return;
+    const events = parsedEvents.map((event) => toEventInput(event, noteId));
+    const result = await createSchedules(events);
+    if (result) setStep(3);
+  };
 
   return (
     <div className="max-w-3xl mx-auto">
       <p className="text-sm text-toss-blue font-medium mb-2">STEP 2 / 3</p>
       <h2 className="text-3xl font-bold mb-3 leading-tight">
-        {visibleDrafts.length}개의 일정을 찾았어요
+        {parsedEvents.length}개의 일정을 찾았어요
       </h2>
       <p className="text-base text-toss-gray-500 mb-8">
         필요한 정보를 직접 입력하거나 비워둘 수 있어요
       </p>
 
-      {visibleDrafts.length === 0 ? (
+      {parsedEvents.length === 0 ? (
         <div className="bg-white rounded-2xl border border-toss-gray-100 p-10 text-center text-sm text-toss-gray-500 mb-6">
           등록할 일정이 없어요. 메모를 다시 작성해주세요.
         </div>
       ) : (
-        visibleDrafts.map((draft) => (
-          <EventCard key={draft.temp_id} draft={draft} />
+        parsedEvents.map((event) => (
+          <EventCard key={event.temp_id} event={event} />
         ))
       )}
 
@@ -97,13 +78,13 @@ export function PreviewCardList() {
         </button>
         <button
           type="button"
-          disabled={visibleDrafts.length === 0 || mutation.isPending}
-          onClick={() => mutation.mutate()}
+          disabled={parsedEvents.length === 0 || isSubmitting}
+          onClick={handleCreate}
           className="flex-1 py-4 bg-toss-blue hover:bg-toss-blue-hover text-white rounded-xl font-medium text-base disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          {mutation.isPending
+          {isSubmitting
             ? "등록 중..."
-            : `${visibleDrafts.length}개 일정 모두 등록`}
+            : `${parsedEvents.length}개 일정 모두 등록`}
         </button>
       </div>
     </div>

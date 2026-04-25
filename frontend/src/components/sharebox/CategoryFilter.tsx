@@ -1,6 +1,6 @@
-import type { ShareBoxCategory } from "@/data/mockDocs";
+import type { DocCategory } from "@/types/api";
 
-type CategoryValue = ShareBoxCategory | "all";
+type CategoryValue = DocCategory | "all";
 
 interface Item {
   value: CategoryValue;

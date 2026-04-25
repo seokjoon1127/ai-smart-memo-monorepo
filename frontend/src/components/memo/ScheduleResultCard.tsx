@@ -1,6 +1,6 @@
-import { useQuery } from "@tanstack/react-query";
+import { useEffect } from "react";
+import { useScheduleStore } from "@/stores/scheduleStore";
 import type { EventType, Schedule } from "@/types/api";
-import { scheduleApi } from "@/services";
 import { formatDateKo, formatTimeKo } from "@/utils/date";
 import { RelatedDocCard } from "./RelatedDocCard";
 import { SuggestionBox } from "./SuggestionBox";
@@ -29,13 +29,15 @@ const typeBadge: Record<EventType, { label: string; className: string }> = {
 };
 
 export function ScheduleResultCard({ schedule }: Props) {
-  const detailQuery = useQuery({
-    queryKey: ["schedule", schedule.id],
-    queryFn: () => scheduleApi.getDetail(schedule.id),
-    staleTime: 60_000,
-  });
+  const detail = useScheduleStore(
+    (s) => s.scheduleDetails[schedule.id],
+  );
+  const fetchScheduleDetail = useScheduleStore((s) => s.fetchScheduleDetail);
 
-  const detail = detailQuery.data;
+  useEffect(() => {
+    void fetchScheduleDetail(schedule.id);
+  }, [schedule.id, fetchScheduleDetail]);
+
   const badge = typeBadge[schedule.type];
   const timeText = schedule.is_all_day
     ? "종일"
@@ -98,7 +100,7 @@ export function ScheduleResultCard({ schedule }: Props) {
           </p>
         </div>
 
-        {detailQuery.isLoading && (
+        {!detail && (
           <div className="bg-toss-gray-25 rounded-lg p-3 text-xs text-toss-gray-400">
             연관 문서 불러오는 중...
           </div>

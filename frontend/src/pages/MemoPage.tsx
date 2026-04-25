@@ -57,7 +57,7 @@ function StepIndicator() {
 
 function StepThree() {
   const reset = useMemoStore((s) => s.reset);
-  const recentlyCreated = useScheduleStore((s) => s.recentlyCreated);
+  const recentlyCreated = useScheduleStore((s) => s.schedules);
 
   return (
     <div className="max-w-3xl mx-auto">
@@ -85,7 +85,7 @@ function StepThree() {
         onClick={reset}
         className="w-full py-3 bg-toss-gray-50 hover:bg-toss-gray-100 text-toss-gray-700 rounded-xl text-sm font-medium"
       >
-        처음부터 다시 보기
+        새로운 메모 작성
       </button>
     </div>
   );
@@ -111,9 +111,11 @@ export function MemoPage() {
         centered
       />
       <div className="px-10 py-12">
-        {step === 1 && <MemoEditor />}
-        {step === 2 && <PreviewCardList />}
-        {step === 3 && <StepThree />}
+        <div key={step} className="fade-in">
+          {step === 1 && <MemoEditor />}
+          {step === 2 && <PreviewCardList />}
+          {step === 3 && <StepThree />}
+        </div>
       </div>
     </div>
   );
