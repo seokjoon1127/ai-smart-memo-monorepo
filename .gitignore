@@ -2,3 +2,8 @@ CLAUDE.md
 frontend/docs/*
 .claude/*
 api_contract.md
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
