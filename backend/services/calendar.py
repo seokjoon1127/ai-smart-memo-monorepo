@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from typing import Sequence
 
-from schemas import ApprovedEvent, ConflictInfo, StoredSchedule
+from schemas import ConflictInfo, CreateScheduleEventInput, StoredSchedule
 
+DEFAULT_DURATION_MIN = 60
 SUGGESTION_START_MINUTE = 9 * 60
 SUGGESTION_END_MINUTE = 21 * 60
 SUGGESTION_STEP = 30
@@ -13,27 +14,41 @@ MAX_SUGGESTIONS = 3
 def check_conflicts(
     *,
     date: str,
-    time: str | None,
-    duration: int | None,
+    start_time: str | None,
+    end_time: str | None,
     schedules: Sequence[StoredSchedule],
+    assume_default_duration: bool = False,
 ) -> ConflictInfo:
-    if time is None or duration is None:
+    request_window = _build_window(
+        start_time,
+        end_time,
+        assume_default_duration=assume_default_duration,
+    )
+    if request_window is None:
         return ConflictInfo(has_conflict=False)
 
-    request_start = _time_to_minutes(time)
-    request_end = request_start + duration
+    request_start, request_end = request_window
+    duration = request_end - request_start
 
     for schedule in schedules:
-        if schedule.date != date or schedule.time is None or schedule.duration_min is None:
+        if schedule.date != date:
             continue
 
-        existing_start = _time_to_minutes(schedule.time)
-        existing_end = existing_start + schedule.duration_min
-        if _overlaps(request_start, request_end, existing_start, existing_end):
+        schedule_window = _schedule_window(schedule)
+        if schedule_window is None:
+            continue
+
+        schedule_start, schedule_end = schedule_window
+        if _overlaps(request_start, request_end, schedule_start, schedule_end):
             return ConflictInfo(
                 has_conflict=True,
-                conflicting_event=_format_schedule_label(schedule.title, schedule.time, schedule.duration_min),
-                suggested_times=_suggested_times(date, duration, schedules, request_start),
+                conflicting_event=_format_schedule_label(schedule),
+                suggested_times=_suggested_times(
+                    date=date,
+                    duration=duration,
+                    schedules=schedules,
+                    start_from_minute=schedule_end,
+                ),
             )
 
     return ConflictInfo(has_conflict=False)
@@ -41,62 +56,105 @@ def check_conflicts(
 
 def find_schedule_conflicts(
     existing_schedules: Sequence[StoredSchedule],
-    requested_events: Sequence[ApprovedEvent],
+    requested_events: Sequence[CreateScheduleEventInput],
 ) -> list[dict]:
     conflicts: list[dict] = []
+
     for index, event in enumerate(requested_events):
-        if event.time is None or event.duration_min is None:
+        if event.is_all_day:
             continue
 
-        event_conflict = check_conflicts(
-            date=event.date,
-            time=event.time,
-            duration=event.duration_min,
-            schedules=existing_schedules,
+        event_window = _build_window(
+            event.start_time,
+            event.end_time,
+            assume_default_duration=True,
         )
-        if event_conflict.has_conflict:
-            conflicts.append({"temp_id": event.temp_id, "conflict": event_conflict.model_dump(mode="json")})
+        if event_window is None:
+            continue
+
+        conflict = check_conflicts(
+            date=event.date,
+            start_time=event.start_time,
+            end_time=event.end_time,
+            schedules=existing_schedules,
+            assume_default_duration=True,
+        )
+        if conflict.has_conflict:
+            conflicts.append(
+                {
+                    "index": index,
+                    "title": event.title,
+                    "conflict": conflict.model_dump(mode="json"),
+                }
+            )
             continue
 
         for other_index, other_event in enumerate(requested_events):
             if index == other_index:
                 continue
-            if event.date != other_event.date or other_event.time is None or other_event.duration_min is None:
+            if event.date != other_event.date:
+                continue
+            if other_event.is_all_day:
                 continue
 
-            if _events_overlap(event, other_event):
+            other_window = _build_window(
+                other_event.start_time,
+                other_event.end_time,
+                assume_default_duration=True,
+            )
+            if other_window is None:
+                continue
+
+            if _overlaps(event_window[0], event_window[1], other_window[0], other_window[1]):
                 conflicts.append(
                     {
-                        "temp_id": event.temp_id,
+                        "index": index,
+                        "title": event.title,
                         "conflict": ConflictInfo(
                             has_conflict=True,
-                            conflicting_event=_format_schedule_label(
-                                other_event.title,
-                                other_event.time,
-                                other_event.duration_min,
-                            ),
+                            conflicting_event=_format_event_label(other_event),
                             suggested_times=[],
                         ).model_dump(mode="json"),
                     }
                 )
                 break
 
-    unique_conflicts: list[dict] = []
-    seen_temp_ids: set[str] = set()
-    for conflict in conflicts:
-        temp_id = conflict["temp_id"]
-        if temp_id not in seen_temp_ids:
-            unique_conflicts.append(conflict)
-            seen_temp_ids.add(temp_id)
-    return unique_conflicts
+    return conflicts
 
 
-def _events_overlap(left: ApprovedEvent, right: ApprovedEvent) -> bool:
-    left_start = _time_to_minutes(left.time or "00:00")
-    right_start = _time_to_minutes(right.time or "00:00")
-    left_end = left_start + (left.duration_min or 0)
-    right_end = right_start + (right.duration_min or 0)
-    return _overlaps(left_start, left_end, right_start, right_end)
+def _schedule_window(schedule: StoredSchedule) -> tuple[int, int] | None:
+    if schedule.is_all_day:
+        return None
+
+    return _build_window(
+        schedule.start_time,
+        schedule.end_time,
+        assume_default_duration=True,
+    )
+
+
+def _build_window(
+    start_time: str | None,
+    end_time: str | None,
+    *,
+    assume_default_duration: bool,
+) -> tuple[int, int] | None:
+    if start_time is None:
+        return None
+
+    start = _time_to_minutes(start_time)
+
+    if end_time is None:
+        if not assume_default_duration:
+            return None
+        end = start + DEFAULT_DURATION_MIN
+    else:
+        end = _time_to_minutes(end_time)
+
+    if end <= start:
+        raise ValueError("end_time must be after start_time")
+
+    return start, end
 
 
 def _overlaps(start_a: int, end_a: int, start_b: int, end_b: int) -> bool:
@@ -107,8 +165,10 @@ def _time_to_minutes(value: str) -> int:
     hour_text, minute_text = value.split(":")
     hour = int(hour_text)
     minute = int(minute_text)
+
     if hour < 0 or hour > 23 or minute < 0 or minute > 59:
         raise ValueError("time must be in HH:mm format")
+
     return hour * 60 + minute
 
 
@@ -118,38 +178,71 @@ def _minutes_to_time(value: int) -> str:
     return f"{hour:02d}:{minute:02d}"
 
 
-def _format_schedule_label(title: str, time: str, duration_min: int) -> str:
-    start = _time_to_minutes(time)
-    end = start + duration_min
+def _ceil_to_step(value: int, step: int) -> int:
+    remainder = value % step
+    if remainder == 0:
+        return value
+    return value + (step - remainder)
+
+
+def _format_schedule_label(schedule: StoredSchedule) -> str:
+    return _format_label(schedule.title, schedule.start_time, schedule.end_time)
+
+
+def _format_event_label(event: CreateScheduleEventInput) -> str:
+    return _format_label(event.title, event.start_time, event.end_time)
+
+
+def _format_label(title: str, start_time: str | None, end_time: str | None) -> str:
+    if start_time is None:
+        return title
+
+    start = _time_to_minutes(start_time)
+    end = (
+        _time_to_minutes(end_time)
+        if end_time is not None
+        else start + DEFAULT_DURATION_MIN
+    )
+
     return f"{title} {_minutes_to_time(start)}~{_minutes_to_time(end)}"
 
 
 def _suggested_times(
+    *,
     date: str,
     duration: int,
     schedules: Sequence[StoredSchedule],
-    request_start: int,
+    start_from_minute: int,
 ) -> list[str]:
     suggestions: list[str] = []
-    start_minute = max(SUGGESTION_START_MINUTE, request_start + SUGGESTION_STEP)
-    for candidate_start in range(start_minute, SUGGESTION_END_MINUTE + 1, SUGGESTION_STEP):
+
+    candidate_start = max(
+        SUGGESTION_START_MINUTE,
+        _ceil_to_step(start_from_minute, SUGGESTION_STEP),
+    )
+
+    while candidate_start + duration <= SUGGESTION_END_MINUTE:
         candidate_end = candidate_start + duration
-        if candidate_end > SUGGESTION_END_MINUTE:
-            break
 
         has_conflict = False
         for schedule in schedules:
-            if schedule.date != date or schedule.time is None or schedule.duration_min is None:
+            if schedule.date != date:
                 continue
-            schedule_start = _time_to_minutes(schedule.time)
-            schedule_end = schedule_start + schedule.duration_min
-            if _overlaps(candidate_start, candidate_end, schedule_start, schedule_end):
+
+            schedule_window = _schedule_window(schedule)
+            if schedule_window is None:
+                continue
+
+            if _overlaps(candidate_start, candidate_end, schedule_window[0], schedule_window[1]):
                 has_conflict = True
                 break
 
         if not has_conflict:
             suggestions.append(_minutes_to_time(candidate_start))
+
         if len(suggestions) >= MAX_SUGGESTIONS:
             break
+
+        candidate_start += SUGGESTION_STEP
 
     return suggestions

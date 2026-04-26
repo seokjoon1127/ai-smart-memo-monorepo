@@ -2,6 +2,16 @@ CLAUDE.md
 frontend/docs/*
 .claude/*
 api_contract.md
+__pycache__/
+*.pyc
+.env
+.env.local
+.env.*.local
+backend/.env
+backend/.env.local
+backend/.env.*.local
+!backend/.env.example
+
 
 # Python
 __pycache__/

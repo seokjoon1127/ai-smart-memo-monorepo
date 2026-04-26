@@ -6,10 +6,30 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 EventType = Literal["meeting", "deadline", "event", "other"]
+DocCategory = Literal["meeting", "project", "report", "memo"]
+SuggestionType = Literal["follow_up_meeting", "review_session", "task"]
+ApiErrorCode = Literal[
+    "INVALID_REQUEST",
+    "NOT_FOUND",
+    "CONFLICT_DETECTED",
+    "LLM_PARSE_FAILED",
+    "EXTERNAL_SERVICE_UNAVAILABLE",
+    "INTERNAL_ERROR",
+]
 
 
 class ApiModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+
+class ErrorBody(ApiModel):
+    code: ApiErrorCode
+    message: str
+    detail: dict | None = None
+
+
+class ApiError(ApiModel):
+    error: ErrorBody
 
 
 class CreateNoteRequest(ApiModel):
@@ -25,9 +45,9 @@ class CreateNoteRequest(ApiModel):
 
 class Note(ApiModel):
     id: str
-    user_id: str
-    content: str
+    content: str = Field(..., min_length=1, max_length=2000)
     created_at: str
+    indexed: bool = False
 
 
 class ConflictInfo(ApiModel):
@@ -40,72 +60,137 @@ class ParsedEvent(ApiModel):
     temp_id: str
     title: str
     date: str
-    time: str | None = None
-    duration_min: int | None = None
+    is_all_day: bool
+    start_time: str | None = None
+    end_time: str | None = None
     type: EventType
     participants: list[str] = Field(default_factory=list)
+    location: str | None = None
     conflict: ConflictInfo
 
 
-class ParseResult(ApiModel):
+class ParseRequest(ApiModel):
+    note_id: str
+
+
+class ParseResponse(ApiModel):
     note_id: str
     events: list[ParsedEvent] = Field(default_factory=list)
 
 
-class ApprovedEvent(ApiModel):
-    temp_id: str
+class CreateScheduleEventInput(ApiModel):
     title: str
     date: str
-    time: str | None = None
-    duration_min: int | None = None
+    is_all_day: bool
+    start_time: str | None = None
+    end_time: str | None = None
     type: EventType
     participants: list[str] = Field(default_factory=list)
-
-
-class ParseNoteRequest(ApiModel):
-    note_id: str
+    location: str | None = None
+    alert_minutes_before: int = Field(..., ge=0)
+    source_note_id: str | None = None
 
 
 class CreateSchedulesRequest(ApiModel):
-    note_id: str
-    events: list[ApprovedEvent] = Field(default_factory=list)
-
-
-class RelatedNote(ApiModel):
-    note_id: str
-    content: str
-    relevance_score: float
-    created_at: str
-
-
-class RagSummary(ApiModel):
-    summary: str
-    source_note_ids: list[str] = Field(default_factory=list)
-    generated_at: str
+    events: list[CreateScheduleEventInput] = Field(..., min_length=1)
 
 
 class Schedule(ApiModel):
     id: str
-    user_id: str
     title: str
     date: str
-    time: str | None = None
-    duration_min: int | None = None
+    is_all_day: bool
+    start_time: str | None = None
+    end_time: str | None = None
     type: EventType
-    source_note_id: str
+    participants: list[str] = Field(default_factory=list)
+    location: str | None = None
+    alert_minutes_before: int = Field(..., ge=0)
+    google_event_id: str | None = None
+    source_note_id: str | None = None
     created_at: str
-
-    def to_stored_schedule(self) -> "StoredSchedule":
-        return StoredSchedule(**self.model_dump(), rag_summary=None)
 
 
 class StoredSchedule(Schedule):
-    rag_summary: RagSummary | None = None
+    rag_summary: "RagSummary | None" = None
 
     def to_public_schedule(self) -> Schedule:
         return Schedule(**self.model_dump(exclude={"rag_summary"}))
 
 
+class ScheduleFailure(ApiModel):
+    schedule_id: str
+    reason: str
+
+
+class CreateSchedulesResponse(ApiModel):
+    schedules: list[Schedule] = Field(default_factory=list)
+    failed: list[ScheduleFailure] = Field(default_factory=list)
+
+
+class RelatedDoc(ApiModel):
+    doc_id: str
+    title: str
+    preview: str
+    relevance_score: float = Field(..., ge=0.0, le=1.0)
+    created_at: str
+
+
+class Suggestion(ApiModel):
+    suggestion_id: str
+    type: SuggestionType
+    title: str
+    suggested_date: str
+    suggested_start_time: str | None = None
+    reason: str
+    based_on_schedule_id: str
+
+
 class ScheduleDetail(Schedule):
-    related_notes: list[RelatedNote] = Field(default_factory=list)
-    rag_summary: RagSummary | None = None
+    related_docs: list[RelatedDoc] = Field(default_factory=list)
+    ai_suggestion: Suggestion | None = None
+
+
+class GetConflictsQuery(ApiModel):
+    date: str
+    start_time: str | None = None
+    end_time: str | None = None
+
+
+class ShareDoc(ApiModel):
+    id: str
+    title: str = Field(..., min_length=1, max_length=200)
+    category: DocCategory
+    author: str
+    preview: str
+    tags: list[str] = Field(default_factory=list)
+    created_at: str
+    indexed: bool = False
+
+
+class ShareDocDetail(ShareDoc):
+    full_content: str
+
+
+class GetShareBoxResponse(ApiModel):
+    items: list[ShareDoc] = Field(default_factory=list)
+    total: int
+    limit: int
+    offset: int
+
+
+class CreateShareDocRequest(ApiModel):
+    title: str = Field(..., min_length=1, max_length=200)
+    category: DocCategory
+    author: str
+    full_content: str = Field(..., min_length=1)
+    tags: list[str] = Field(default_factory=list)
+
+
+class AcceptSuggestionRequest(ApiModel):
+    alert_minutes_before: int = Field(..., ge=0)
+
+class RagSummary(ApiModel):
+    summary: str
+    source_note_ids: list[str] = Field(default_factory=list)
+    generated_at: str
