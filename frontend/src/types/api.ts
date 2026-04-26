@@ -186,7 +186,8 @@ export interface GetShareBoxResponse {
 export interface CreateShareDocRequest {
   title: string
   category: DocCategory
-  preview: string
+  author: string
+  full_content: string
   tags: string[]
 }
 export type CreateShareDocResponse = ShareDoc

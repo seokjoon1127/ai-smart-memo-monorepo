@@ -327,12 +327,20 @@ export const mockApi = {
           length: title.length,
         });
       }
+      const fullContent = req.full_content.trim();
+      if (!fullContent) {
+        throwApiError("INVALID_REQUEST", "본문은 1자 이상이어야 해요", {
+          field: "full_content",
+        });
+      }
+      const preview =
+        fullContent.length > 200 ? `${fullContent.slice(0, 200)}…` : fullContent;
       const doc: ShareDoc = {
         id: makeId("doc", docsStore),
         title,
         category: req.category,
-        author: "demo_user",
-        preview: req.preview,
+        author: req.author,
+        preview,
         tags: req.tags,
         created_at: nowIso(),
         indexed: false,
