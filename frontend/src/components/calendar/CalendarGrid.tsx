@@ -1,10 +1,5 @@
 import type { EventType, Schedule } from "@/types/api";
 
-const FIRST_WEEKDAY = 3; // 2026-04-01은 수요일
-const DAYS_IN_MONTH = 30;
-const TODAY = 25;
-const PREV_DAYS = [29, 30, 31];
-
 const pillClassByType: Record<EventType, string> = {
   meeting: "bg-toss-blue-light text-[#1B64DA]",
   deadline: "bg-toss-warning-bg text-[#C2410C]",
@@ -13,11 +8,14 @@ const pillClassByType: Record<EventType, string> = {
 };
 
 interface Props {
+  year: number;
+  month: number;
   events: Schedule[];
+  today?: Date;
+  onEventClick?: (scheduleId: string) => void;
 }
 
 function dayOf(dateStr: string): number {
-  // "2026-04-23" → 23
   return Number(dateStr.slice(8, 10));
 }
 
@@ -40,27 +38,39 @@ interface Cell {
   events: Schedule[];
 }
 
-function buildCells(byDay: Record<number, Schedule[]>): Cell[] {
+function buildCells(
+  year: number,
+  month: number,
+  byDay: Record<number, Schedule[]>,
+  todayDayInMonth: number | null,
+): Cell[] {
+  const firstWeekday = new Date(year, month - 1, 1).getDay();
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const prevMonthDays = new Date(year, month - 1, 0).getDate();
+
   const cells: Cell[] = [];
-  for (let i = 0; i < FIRST_WEEKDAY; i += 1) {
+
+  for (let i = 0; i < firstWeekday; i += 1) {
     cells.push({
-      day: PREV_DAYS[i],
+      day: prevMonthDays - firstWeekday + 1 + i,
       isOtherMonth: true,
       isToday: false,
       weekday: i,
       events: [],
     });
   }
-  for (let d = 1; d <= DAYS_IN_MONTH; d += 1) {
-    const weekday = (FIRST_WEEKDAY + d - 1) % 7;
+
+  for (let d = 1; d <= daysInMonth; d += 1) {
+    const weekday = (firstWeekday + d - 1) % 7;
     cells.push({
       day: d,
       isOtherMonth: false,
-      isToday: d === TODAY,
+      isToday: d === todayDayInMonth,
       weekday,
       events: byDay[d] ?? [],
     });
   }
+
   const remaining = (7 - (cells.length % 7)) % 7;
   for (let i = 1; i <= remaining; i += 1) {
     cells.push({
@@ -71,15 +81,28 @@ function buildCells(byDay: Record<number, Schedule[]>): Cell[] {
       events: [],
     });
   }
+
   return cells;
 }
 
 const cellBase =
   "bg-white min-h-[110px] p-2 cursor-pointer transition hover:bg-toss-gray-25";
 
-export function CalendarGrid({ events }: Props) {
+export function CalendarGrid({
+  year,
+  month,
+  events,
+  today,
+  onEventClick,
+}: Props) {
+  const now = today ?? new Date();
+  const todayDayInMonth =
+    now.getFullYear() === year && now.getMonth() + 1 === month
+      ? now.getDate()
+      : null;
+
   const byDay = groupByDay(events);
-  const cells = buildCells(byDay);
+  const cells = buildCells(year, month, byDay, todayDayInMonth);
 
   return (
     <>
@@ -128,13 +151,18 @@ export function CalendarGrid({ events }: Props) {
                 <span className={`text-sm ${dayColor}`}>{cell.day}</span>
               )}
               {cell.events.slice(0, 3).map((event) => (
-                <div
+                <button
                   key={event.id}
-                  className={`text-[11px] px-1.5 py-0.5 rounded mt-1 truncate ${pillClassByType[event.type]}`}
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onEventClick?.(event.id);
+                  }}
+                  className={`block w-full text-left text-[11px] px-1.5 py-0.5 rounded mt-1 truncate hover:brightness-95 transition ${pillClassByType[event.type]}`}
                   title={event.title}
                 >
                   {event.title}
-                </div>
+                </button>
               ))}
               {cell.events.length > 3 && (
                 <div className="text-[10px] text-toss-gray-400 mt-0.5">

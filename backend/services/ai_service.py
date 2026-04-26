@@ -97,7 +97,6 @@ class SuggestionDraft(BaseModel):
 
 def parse_note_content(content: str) -> list[ExtractedEvent]:
     client = _build_client()
-    model = _get_required_env("GEMINI_MODEL")
     today = datetime.now(KST).date().isoformat()
 
     prompt = f"""
@@ -139,18 +138,44 @@ Memo:
 {content}
 """.strip()
 
-    response = client.models.generate_content(
-        model=model,
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            response_mime_type="application/json",
-            response_schema=ExtractedEventEnvelope,
-            temperature=0,
-        ),
-    )
+    last_error: Exception | None = None
+    for model in _get_model_chain():
+        try:
+            response = client.models.generate_content(
+                model=model,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_schema=ExtractedEventEnvelope,
+                    temperature=0,
+                ),
+            )
+            parsed = _coerce_parsed_response(response, ExtractedEventEnvelope)
+            return parsed.events
+        except Exception as exc:
+            last_error = exc
+            if not _is_quota_exhausted(exc):
+                raise
 
-    parsed = _coerce_parsed_response(response, ExtractedEventEnvelope)
-    return parsed.events
+    if last_error is not None:
+        raise last_error
+    return []
+
+
+def _get_model_chain() -> list[str]:
+    primary = _get_required_env("GEMINI_MODEL")
+    fallback_raw = os.getenv("GEMINI_FALLBACK_MODELS", "").strip()
+    fallbacks = [m.strip() for m in fallback_raw.split(",") if m.strip()]
+    chain: list[str] = []
+    for model in [primary, *fallbacks]:
+        if model and model not in chain:
+            chain.append(model)
+    return chain
+
+
+def _is_quota_exhausted(exc: Exception) -> bool:
+    message = str(exc)
+    return "429" in message or "RESOURCE_EXHAUSTED" in message
 
 
 def rebuild_share_doc_index(
@@ -517,6 +542,8 @@ def _build_client():
     api_key = os.getenv("GEMINI_API_KEY", "").strip()
     if not api_key:
         raise AIServiceUnavailable("GEMINI_API_KEY is not configured")
+
+    os.environ.pop("GOOGLE_API_KEY", None)
 
     return genai.Client(api_key=api_key)
 

@@ -14,3 +14,9 @@ export const shareBoxApi = USE_MOCK ? mockApi.shareBox : realApi.shareBox
 export const suggestionApi = USE_MOCK
   ? mockApi.suggestion
   : realApi.suggestion
+
+export const adminApi = USE_MOCK
+  ? {
+      reset: async () => ({ ok: true, counts: {} as Record<string, number> }),
+    }
+  : realApi.admin

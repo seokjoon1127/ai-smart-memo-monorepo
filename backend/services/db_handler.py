@@ -10,10 +10,15 @@ from schemas import DocCategory, Note, ShareDoc, ShareDocDetail, StoredSchedule
 BASE_DIR = Path(__file__).resolve().parent.parent
 DB_DIR = BASE_DIR / "DB"
 FAISS_DIR = DB_DIR / "faiss_index"
+SEED_DIR = DB_DIR / "seed"
 
 NOTES_PATH = DB_DIR / "notes.json"
 SCHEDULES_PATH = DB_DIR / "schedules.json"
 SHARE_DOCS_PATH = DB_DIR / "share_docs.json"
+
+SEED_NOTES_PATH = SEED_DIR / "notes.json"
+SEED_SCHEDULES_PATH = SEED_DIR / "schedules.json"
+SEED_SHARE_DOCS_PATH = SEED_DIR / "share_docs.json"
 
 ID_MAP_PATH = FAISS_DIR / "id_map.json" # FAISS row와 실제 리소스 id 연결정보
 INDEX_PATH = FAISS_DIR / "index.faiss" # 멕터 검색용 FAISS 인덱스 파일
@@ -230,3 +235,36 @@ def _create_next_id(prefix: str, values: Sequence[str]) -> str:
             max_value = max(max_value, int(match.group(1)))
 
     return f"{prefix}_{max_value + 1:03d}"
+
+
+def reset_to_seed() -> dict[str, int]:
+    ensure_storage()
+
+    pairs = (
+        (SEED_NOTES_PATH, NOTES_PATH, "notes"),
+        (SEED_SCHEDULES_PATH, SCHEDULES_PATH, "schedules"),
+        (SEED_SHARE_DOCS_PATH, SHARE_DOCS_PATH, "share_docs"),
+    )
+
+    counts: dict[str, int] = {}
+    for seed_path, target_path, label in pairs:
+        if seed_path.exists():
+            payload = seed_path.read_text(encoding="utf-8")
+        else:
+            payload = "[]"
+
+        target_path.write_text(payload, encoding="utf-8")
+        counts[label] = len(json.loads(payload) or [])
+
+    if INDEX_PATH.exists():
+        INDEX_PATH.unlink()
+    ID_MAP_PATH.write_text("[]", encoding="utf-8")
+
+    from services.ai_service import rebuild_share_doc_index
+
+    docs = load_share_docs()
+    if docs:
+        updated = rebuild_share_doc_index(docs)
+        save_share_docs(updated)
+
+    return counts

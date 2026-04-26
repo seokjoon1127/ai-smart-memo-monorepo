@@ -1,10 +1,17 @@
 from __future__ import annotations
 
+import logging
 import os
+import sys
+import traceback
 from datetime import datetime, timedelta
 from typing import Any
 from uuid import uuid4
 from zoneinfo import ZoneInfo
+
+logging.basicConfig(level=logging.INFO, stream=sys.stderr, force=True)
+logger = logging.getLogger("ai_smart_memo")
+logger.setLevel(logging.DEBUG)
 
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, FastAPI, Query, Request, status
@@ -58,6 +65,7 @@ from services.db_handler import (
     load_notes,
     load_schedules,
     load_share_docs,
+    reset_to_seed,
     save_notes,
     save_schedules,
     save_share_docs,
@@ -109,9 +117,15 @@ async def api_exception_handler(_: Request, exc: ApiException) -> JSONResponse:
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(
-    _: Request,
+    request: Request,
     exc: RequestValidationError,
 ) -> JSONResponse:
+    logger.warning(
+        "RequestValidationError on %s %s: %s",
+        request.method,
+        request.url.path,
+        exc.errors(),
+    )
     return _error_response(
         status_code=status.HTTP_400_BAD_REQUEST,
         code="INVALID_REQUEST",
@@ -198,6 +212,12 @@ def parse_note(payload: ParseRequest) -> ParseResponse:
             message=str(exc),
         ) from exc
     except Exception as exc:
+        logger.error(
+            "parse_note failed: %s: %s\n%s",
+            exc.__class__.__name__,
+            exc,
+            traceback.format_exc(),
+        )
         raise ApiException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             code="LLM_PARSE_FAILED",
@@ -439,6 +459,15 @@ def get_share_doc_detail(doc_id: str) -> ShareDocDetail:
         )
 
     return doc
+
+
+@app.post("/api/admin/reset")
+def reset_demo_state() -> dict[str, Any]:
+    counts = reset_to_seed()
+    SUGGESTION_CACHE.clear()
+    global SUGGESTION_SEQUENCE
+    SUGGESTION_SEQUENCE = 0
+    return {"ok": True, "counts": counts}
 
 
 @app.post("/api/suggestions/{suggestion_id}/accept", response_model=Schedule)

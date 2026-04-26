@@ -105,4 +105,14 @@ export const realApi = {
       return data
     },
   },
+
+  admin: {
+    reset: async (): Promise<{ ok: boolean; counts: Record<string, number> }> => {
+      const { data } = await apiClient.post<{
+        ok: boolean
+        counts: Record<string, number>
+      }>('/admin/reset')
+      return data
+    },
+  },
 }

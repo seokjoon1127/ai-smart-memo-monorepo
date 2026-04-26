@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
 import { useMemoStore } from "@/stores/memoStore";
 import type { ParsedEvent } from "@/types/api";
 import { addMinutesToTime, diffMinutes, formatDateKo } from "@/utils/date";
+import { ParticipantPicker } from "@/components/common/ParticipantPicker";
 
 interface Props {
   event: ParsedEvent;
@@ -10,36 +10,9 @@ interface Props {
 const DEFAULT_START = "09:00";
 const DEFAULT_DURATION_MIN = 60;
 
-function joinParticipants(participants: string[]): string {
-  return participants.join(", ");
-}
-
-function splitParticipants(text: string): string[] {
-  return text
-    .split(",")
-    .map((value) => value.trim())
-    .filter(Boolean);
-}
-
 export function EventCard({ event }: Props) {
   const updateEventField = useMemoStore((s) => s.updateEventField);
   const removeEvent = useMemoStore((s) => s.removeEvent);
-
-  // 참석자만 입력 중간 상태(쉼표 분리 전 텍스트)를 컴포넌트 useState로 보관.
-  // 나머지 필드는 store(parsedEvents)가 단일 진실 공급원.
-  const [participantsText, setParticipantsText] = useState(
-    joinParticipants(event.participants),
-  );
-  useEffect(() => {
-    setParticipantsText(joinParticipants(event.participants));
-  }, [event.participants]);
-
-  const commitParticipants = () => {
-    const next = splitParticipants(participantsText);
-    if (next.join(",") !== event.participants.join(",")) {
-      updateEventField(event.temp_id, { participants: next });
-    }
-  };
 
   const handleAllDayToggle = () => {
     const next = !event.is_all_day;
@@ -183,13 +156,11 @@ export function EventCard({ event }: Props) {
         <label className="text-[11px] text-toss-gray-500 font-medium mb-1 block">
           참석자
         </label>
-        <input
-          type="text"
-          placeholder="예: 김팀장, 이수진, 박민수 (쉼표로 구분)"
-          value={participantsText}
-          onChange={(e) => setParticipantsText(e.target.value)}
-          onBlur={commitParticipants}
-          className="w-full px-3 py-2 text-sm border border-toss-gray-200 rounded-lg outline-none focus:border-toss-blue placeholder:text-toss-gray-300"
+        <ParticipantPicker
+          value={event.participants}
+          onChange={(next) =>
+            updateEventField(event.temp_id, { participants: next })
+          }
         />
       </div>
 
