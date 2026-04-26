@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+*.pyo
+.env
+.env.local
+.env.*.local
+.venv/
+venv/
+DB/notes.json
+DB/schedules.json
+DB/share_docs.json
+DB/faiss_index/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
