@@ -1,5 +1,7 @@
 # AI Smart Memo
 
+![alt text](image.png)
+
 > 메모를 자연어로 적으면 AI가 일정으로 만들어주는 생산성 SaaS
 
 한 줄짜리 한국어 메모(예: _"내일 3시 김팀장 회의, 금요일까지 보고서 제출"_)를 입력하면 LLM이 일정 후보를 추출하고, 시간 충돌을 자동 감지해 대안 시간을 제안하고, 등록 후엔 RAG로 관련 문서까지 연결해줍니다.
@@ -15,12 +17,12 @@
 
 ## 2. 사용자 문제 분석
 
-| 페인 포인트 | 사용자 행동 | 손실 |
-| --- | --- | --- |
-| 자연어 → 캘린더 양식 변환의 인지 비용 | 메모는 적지만 캘린더에 옮기지 않거나 미룸 | 일정 누락, 약속 펑크 |
-| 시간 충돌 사전 인지 부족 | 일정 등록 후 뒤늦게 발견 | 더블 부킹, 재조정 비용 |
-| 일정-자료 단절 | 회의 직전 문서 검색 | 회의 준비 시간 5–10분/회 낭비 |
-| 후속 미팅 누락 | 회의 종료 후 follow-up 망각 | 의사결정 지연, 액션 아이템 분실 |
+| 페인 포인트                           | 사용자 행동                               | 손실                            |
+| ------------------------------------- | ----------------------------------------- | ------------------------------- |
+| 자연어 → 캘린더 양식 변환의 인지 비용 | 메모는 적지만 캘린더에 옮기지 않거나 미룸 | 일정 누락, 약속 펑크            |
+| 시간 충돌 사전 인지 부족              | 일정 등록 후 뒤늦게 발견                  | 더블 부킹, 재조정 비용          |
+| 일정-자료 단절                        | 회의 직전 문서 검색                       | 회의 준비 시간 5–10분/회 낭비   |
+| 후속 미팅 누락                        | 회의 종료 후 follow-up 망각               | 의사결정 지연, 액션 아이템 분실 |
 
 핵심은 **"메모를 일정으로 만드는 작업 자체"가 마찰**이라는 점입니다. 사용자는 일정 정보를 이미 자연어로 갖고 있고, 부족한 건 그것을 구조화해 캘린더·문서·후속 미팅과 연결하는 자동화 레이어입니다.
 
@@ -54,19 +56,25 @@
 ![Python](https://img.shields.io/badge/Python_3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white)
 ![Pydantic](https://img.shields.io/badge/Pydantic-E92063?style=for-the-badge&logo=pydantic&logoColor=white)
-![Uvicorn](https://img.shields.io/badge/Uvicorn-499848?style=for-the-badge&logo=gunicorn&logoColor=white)
 
 **AI / 벡터 검색**
 
-![Gemini](https://img.shields.io/badge/Google_Gemini_2.0_Flash-8E75B2?style=for-the-badge&logo=googlegemini&logoColor=white)
-![Gemini Embedding](https://img.shields.io/badge/text--embedding--004-4285F4?style=for-the-badge&logo=google&logoColor=white)
+![Gemini](https://img.shields.io/badge/Gemini_2.5_Flash_Lite-8E75B2?style=for-the-badge&logo=googlegemini&logoColor=white)
+![Gemini Embedding](https://img.shields.io/badge/gemini--embedding--001-4285F4?style=for-the-badge&logo=google&logoColor=white)
 ![FAISS](https://img.shields.io/badge/FAISS-0467DF?style=for-the-badge&logo=meta&logoColor=white)
 
-**외부 연동 / 인프라**
+**배포 / 인프라**
+
+![Cloud Run](https://img.shields.io/badge/Cloud_Run-4285F4?style=for-the-badge&logo=googlecloud&logoColor=white)
+![Firebase Hosting](https://img.shields.io/badge/Firebase_Hosting-FFCA28?style=for-the-badge&logo=firebase&logoColor=black)
+![Artifact Registry](https://img.shields.io/badge/Artifact_Registry-4285F4?style=for-the-badge&logo=googlecloud&logoColor=white)
+![Secret Manager](https://img.shields.io/badge/Secret_Manager-4285F4?style=for-the-badge&logo=googlecloud&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white)
+![GitHub Actions](https://img.shields.io/badge/GitHub_Actions-2088FF?style=for-the-badge&logo=githubactions&logoColor=white)
+
+**외부 연동**
 
 ![Google Calendar](https://img.shields.io/badge/Google_Calendar_API-4285F4?style=for-the-badge&logo=googlecalendar&logoColor=white)
-![Docker](https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white)
-![Nginx](https://img.shields.io/badge/Nginx_1.27-009639?style=for-the-badge&logo=nginx&logoColor=white)
 
 ### 컴포넌트 구성
 
