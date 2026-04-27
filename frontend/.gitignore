@@ -27,3 +27,5 @@ coverage/
 
 # Cache
 .vite/
+.firebase/
+firebase-debug.log*

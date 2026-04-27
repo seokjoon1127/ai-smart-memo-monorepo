@@ -1,0 +1,60 @@
+# Firebase Hosting 자동 배포 워크플로
+#
+# 사전 준비 (1회):
+#   1) https://console.firebase.google.com 에서 GCP 프로젝트를 Firebase에 연결
+#      (백엔드와 같은 프로젝트 사용 권장)
+#   2) frontend/.firebaserc 의 "YOUR_FIREBASE_PROJECT_ID" 를 실제 프로젝트 ID로 교체
+#   3) Firebase Hosting Admin 권한이 있는 서비스 계정 JSON 키 발급
+#      (백엔드용 GCP_SA_KEY 와 같은 계정에 roles/firebasehosting.admin 추가해도 됨)
+#
+# 필요한 GitHub Secrets:
+#   FIREBASE_SERVICE_ACCOUNT  - 서비스 계정 JSON 키 전체 내용
+#   FIREBASE_PROJECT_ID       - Firebase 프로젝트 ID
+#   VITE_API_BASE_URL         - Cloud Run 백엔드 URL + /api
+#                               예: https://ai-smart-memo-backend-xxxxxx.a.run.app/api
+
+name: Deploy Frontend to Firebase Hosting
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/deploy-frontend.yml'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        env:
+          VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
+          VITE_USE_MOCK: 'false'
+        run: npm run build
+
+      - name: Deploy to Firebase Hosting
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: ${{ secrets.GITHUB_TOKEN }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          projectId: ${{ secrets.FIREBASE_PROJECT_ID }}
+          channelId: live
+          entryPoint: frontend
