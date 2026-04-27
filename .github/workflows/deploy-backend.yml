@@ -1,0 +1,68 @@
+# Cloud Run 자동 배포 워크플로
+#
+# 사전 준비 (1회):
+#   1) GCP 프로젝트에서 활성화: Cloud Run, Cloud Build, Artifact Registry, Secret Manager
+#   2) 서비스 계정 생성 + 역할 부여:
+#        - roles/run.admin
+#        - roles/cloudbuild.builds.editor
+#        - roles/artifactregistry.writer
+#        - roles/iam.serviceAccountUser
+#        - roles/secretmanager.secretAccessor
+#   3) 서비스 계정 JSON 키 생성 → GitHub Secret으로 등록
+#   4) Secret Manager에 GEMINI_API_KEY 시크릿 생성
+#
+# 필요한 GitHub Secrets:
+#   GCP_PROJECT_ID     - GCP 프로젝트 ID
+#   GCP_SA_KEY         - 서비스 계정 JSON 키 전체 내용
+#   ALLOWED_ORIGINS    - Vercel 도메인 (예: https://your-app.vercel.app)
+
+name: Deploy Backend to Cloud Run
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - '.github/workflows/deploy-backend.yml'
+  workflow_dispatch:
+
+env:
+  REGION: asia-northeast3
+  SERVICE: ai-smart-memo-backend
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy "$SERVICE" \
+            --source ./backend \
+            --region "$REGION" \
+            --project "${{ secrets.GCP_PROJECT_ID }}" \
+            --allow-unauthenticated \
+            --port 8080 \
+            --set-env-vars "GEMINI_MODEL=gemini-2.5-flash-lite,GEMINI_EMBEDDING_MODEL=gemini-embedding-001,ALLOWED_ORIGINS=${{ secrets.ALLOWED_ORIGINS }}" \
+            --set-secrets "GEMINI_API_KEY=GEMINI_API_KEY:latest" \
+            --quiet
+
+      - name: Show service URL
+        run: |
+          gcloud run services describe "$SERVICE" \
+            --region "$REGION" \
+            --project "${{ secrets.GCP_PROJECT_ID }}" \
+            --format='value(status.url)'
