@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Sequence
 from zoneinfo import ZoneInfo
@@ -49,6 +49,38 @@ GENERIC_TITLE_WORDS = {
     "일정",
     "업무",
 }
+
+KOREAN_WEEKDAYS = {
+    "월": 0,
+    "월요일": 0,
+    "화": 1,
+    "화요일": 1,
+    "수": 2,
+    "수요일": 2,
+    "목": 3,
+    "목요일": 3,
+    "금": 4,
+    "금요일": 4,
+    "토": 5,
+    "토요일": 5,
+    "일": 6,
+    "일요일": 6,
+}
+
+DATE_PATTERNS = [
+    r"\d{4}[-./]\d{1,2}[-./]\d{1,2}",
+    r"\d{1,2}\s*월\s*\d{1,2}\s*일",
+    r"\d{1,2}/\d{1,2}",
+    r"오늘|내일|모레",
+    r"(?:이번\s*주|다음\s*주)?\s*(?:월요일|화요일|수요일|목요일|금요일|토요일|일요일)",
+]
+
+TIME_PATTERN = re.compile(
+    r"(?:(오전|오후)\s*)?(\d{1,2})(?::|시\s*)(\d{1,2})?(?:분)?"
+)
+PARTICIPANT_PATTERN = re.compile(
+    r"([가-힣A-Za-z]{1,12}(?:팀장|님|씨|대표|매니저|PM|pm))"
+)
 
 try:
     import numpy as np
@@ -96,6 +128,10 @@ class SuggestionDraft(BaseModel):
 
 
 def parse_note_content(content: str) -> list[ExtractedEvent]:
+    local_events = _parse_note_content_locally(content)
+    if local_events:
+        return local_events
+
     client = _build_client()
     today = datetime.now(KST).date().isoformat()
 
@@ -160,6 +196,162 @@ Memo:
     if last_error is not None:
         raise last_error
     return []
+
+def _parse_note_content_locally(content: str) -> list[ExtractedEvent]:
+    today = datetime.now(KST).date()
+    events: list[ExtractedEvent] = []
+
+    for segment in _split_memo_segments(content):
+        parsed_date = _extract_local_date(segment, today)
+        if parsed_date is None:
+            continue
+
+        start_time = _extract_local_time(segment)
+        has_meeting_keyword = _contains_keyword(
+            segment,
+            ("회의", "미팅", "스탠드업", "면담"),
+        )
+        has_deadline_keyword = _contains_keyword(
+            segment,
+            ("까지", "마감", "제출", "데드라인"),
+        )
+
+        if start_time is None and not has_meeting_keyword and not has_deadline_keyword:
+            continue
+
+        title = _clean_local_title(segment)
+        event_type: EventType
+        if has_meeting_keyword:
+            event_type = "meeting"
+        elif has_deadline_keyword:
+            event_type = "deadline"
+        elif start_time is not None:
+            event_type = "event"
+        else:
+            event_type = "other"
+
+        events.append(
+            ExtractedEvent(
+                title=title,
+                date=parsed_date.isoformat(),
+                is_all_day=start_time is None,
+                start_time=start_time,
+                end_time=None,
+                type=event_type,
+                participants=_extract_local_participants(segment)
+                if has_meeting_keyword
+                else [],
+                location=None,
+            )
+        )
+
+    return events
+
+def _split_memo_segments(content: str) -> list[str]:
+    return [
+        segment.strip()
+        for segment in re.split(r"[,，\n.;]+|\s+그리고\s+", content)
+        if segment.strip()
+    ]
+
+def _extract_local_date(segment: str, today: date) -> date | None:
+    normalized = segment.strip()
+
+    if "오늘" in normalized:
+        return today
+    if "내일" in normalized:
+        return today + timedelta(days=1)
+    if "모레" in normalized:
+        return today + timedelta(days=2)
+
+    explicit = re.search(r"(\d{4})[-./](\d{1,2})[-./](\d{1,2})", normalized)
+    if explicit:
+        return date(
+            int(explicit.group(1)),
+            int(explicit.group(2)),
+            int(explicit.group(3)),
+        )
+
+    month_day = re.search(r"(\d{1,2})\s*월\s*(\d{1,2})\s*일", normalized)
+    if month_day:
+        return _future_month_day(
+            today,
+            int(month_day.group(1)),
+            int(month_day.group(2)),
+        )
+
+    slash_date = re.search(r"(?<!\d)(\d{1,2})/(\d{1,2})(?!\d)", normalized)
+    if slash_date:
+        return _future_month_day(
+            today,
+            int(slash_date.group(1)),
+            int(slash_date.group(2)),
+        )
+
+    weekday = re.search(
+        r"(이번\s*주|다음\s*주)?\s*(월요일|화요일|수요일|목요일|금요일|토요일|일요일)",
+        normalized,
+    )
+    if weekday:
+        prefix = weekday.group(1) or ""
+        target_weekday = KOREAN_WEEKDAYS[weekday.group(2)]
+        days_ahead = (target_weekday - today.weekday()) % 7
+        if "다음" in prefix:
+            days_ahead += 7
+        return today + timedelta(days=days_ahead)
+
+    return None
+
+def _future_month_day(today: date, month: int, day: int) -> date:
+    parsed = date(today.year, month, day)
+    if parsed < today:
+        return date(today.year + 1, month, day)
+    return parsed
+
+def _extract_local_time(segment: str) -> str | None:
+    match = TIME_PATTERN.search(segment)
+    if match is None:
+        return None
+
+    meridiem = match.group(1)
+    hour = int(match.group(2))
+    minute = int(match.group(3) or "0")
+
+    if hour > 24 or minute > 59:
+        return None
+    if meridiem == "오후" and hour < 12:
+        hour += 12
+    elif meridiem == "오전" and hour == 12:
+        hour = 0
+    elif meridiem is None and 1 <= hour <= 7:
+        hour += 12
+
+    if hour == 24:
+        hour = 0
+    if hour > 23:
+        return None
+
+    return f"{hour:02d}:{minute:02d}"
+
+def _clean_local_title(segment: str) -> str:
+    title = segment
+    for pattern in DATE_PATTERNS:
+        title = re.sub(pattern, " ", title)
+    title = TIME_PATTERN.sub(" ", title)
+    title = re.sub(r"\b까지\b|까지", " ", title)
+    title = re.sub(r"\s+", " ", title).strip(" ,，.;")
+    return title or segment.strip()
+
+def _extract_local_participants(segment: str) -> list[str]:
+    participants: list[str] = []
+    for match in PARTICIPANT_PATTERN.finditer(segment):
+        participant = match.group(1)
+        if participant not in participants:
+            participants.append(participant)
+    return participants
+
+def _contains_keyword(value: str, keywords: Sequence[str]) -> bool:
+    return any(keyword in value for keyword in keywords)
 
 
 def _get_model_chain() -> list[str]:
