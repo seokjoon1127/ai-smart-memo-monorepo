@@ -41,14 +41,21 @@ export function EventCard({ event }: Props) {
       updateEventField(event.temp_id, {
         start_time: value,
         end_time: addMinutesToTime(value, duration),
+        conflict: { has_conflict: false },
       });
     } else {
-      updateEventField(event.temp_id, { start_time: value });
+      updateEventField(event.temp_id, {
+        start_time: value,
+        conflict: { has_conflict: false },
+      });
     }
   };
 
   const handleEndChange = (value: string) => {
-    updateEventField(event.temp_id, { end_time: value || null });
+    updateEventField(event.temp_id, {
+      end_time: value || null,
+      conflict: { has_conflict: false },
+    });
   };
 
   const handleApplySuggestion = (suggestion: string) => {
@@ -57,9 +64,13 @@ export function EventCard({ event }: Props) {
       updateEventField(event.temp_id, {
         start_time: suggestion,
         end_time: addMinutesToTime(suggestion, duration),
+        conflict: { has_conflict: false },
       });
     } else {
-      updateEventField(event.temp_id, { start_time: suggestion });
+      updateEventField(event.temp_id, {
+        start_time: suggestion,
+        conflict: { has_conflict: false },
+      });
     }
   };
 
