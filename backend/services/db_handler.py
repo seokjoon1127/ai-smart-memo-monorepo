@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -18,6 +19,7 @@ SCHEDULES_PATH = DB_DIR / "schedules.json"
 SHARE_DOCS_PATH = DB_DIR / "share_docs.json"
 USERS_PATH = DB_DIR / "users.json"
 GOOGLE_TOKENS_PATH = DB_DIR / "google_tokens.json"
+GOOGLE_USER_ID_HASH_LENGTH = 32
 
 SEED_NOTES_PATH = SEED_DIR / "notes.json"
 SEED_SCHEDULES_PATH = SEED_DIR / "schedules.json"
@@ -247,6 +249,10 @@ def create_share_doc_id(docs: Sequence[ShareDocDetail]) -> str:
 def create_user_id(users: Sequence[User]) -> str:
     return _create_next_id("user", [user.id for user in users])
 
+def create_google_user_id(google_sub: str) -> str:
+    digest = hashlib.sha256(google_sub.encode("utf-8")).hexdigest()
+    return f"user_{digest[:GOOGLE_USER_ID_HASH_LENGTH]}"
+
 def _create_next_id(prefix: str, values: Sequence[str]) -> str:
     pattern = re.compile(rf"^{re.escape(prefix)}_(\d+)$")
     max_value = 0
@@ -319,6 +325,34 @@ def upsert_google_token(token: GoogleToken) -> None:
 
     save_google_tokens(next_tokens)
 
+def migrate_google_token_user_id(old_user_id: str, new_user_id: str) -> None:
+    if old_user_id == new_user_id:
+        return
+
+    tokens = load_google_tokens()
+    changed = False
+    migrated_token: GoogleToken | None = None
+    next_tokens: list[GoogleToken] = []
+
+    for token in tokens:
+        if token.user_id == old_user_id:
+            migrated_token = GoogleToken(
+                **token.model_dump(exclude={"user_id"}),
+                user_id=new_user_id,
+            )
+            changed = True
+        else:
+            next_tokens.append(token)
+
+    if migrated_token is not None:
+        next_tokens = [
+            token for token in next_tokens if token.user_id != new_user_id
+        ]
+        next_tokens.append(migrated_token)
+
+    if changed:
+        save_google_tokens(next_tokens)
+
 def get_or_create_user(
     *,
     google_sub: str,
@@ -326,13 +360,27 @@ def get_or_create_user(
     name: str | None,
     created_at: str,
 ) -> User:
-    existing_user = get_user_by_google_sub(google_sub)
-    if existing_user is not None:
-        return existing_user
-
     users = load_users()
+    stable_user_id = create_google_user_id(google_sub)
+
+    for index, existing_user in enumerate(users):
+        if existing_user.google_sub != google_sub:
+            continue
+
+        if existing_user.id == stable_user_id:
+            return existing_user
+
+        updated_user = User(
+            **existing_user.model_dump(exclude={"id"}),
+            id=stable_user_id,
+        )
+        users[index] = updated_user
+        save_users(users)
+        migrate_google_token_user_id(existing_user.id, stable_user_id)
+        return updated_user
+
     user = User(
-        id=create_user_id(users),
+        id=stable_user_id,
         google_sub=google_sub,
         email=email,
         name=name,

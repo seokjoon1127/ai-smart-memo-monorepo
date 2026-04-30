@@ -106,6 +106,7 @@ GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
 SESSION_SECRET = os.getenv("SESSION_SECRET", "dev-session-secret")
 IS_PRODUCTION = os.getenv("ENV", "development") == "production"
+SESSION_VERSION = 2
 SESSION_COOKIE_NAME = "__session"
 LEGACY_SESSION_COOKIE_NAME = "session"
 SESSION_COOKIE_SAMESITE = "none" if IS_PRODUCTION else "lax"
@@ -615,18 +616,26 @@ def get_current_user(request: Request, response: Response) -> AuthResponse:
     user_id = _get_session_user_id(request)
 
     if user_id is None:
+        request.session.clear()
         raise ApiException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             code="INVALID_REQUEST",
             message="Not authenticated",
         )
 
+    session_user = _get_session_user(request)
     user = get_user_by_id(user_id)
 
     if user is not None:
         auth_user = _auth_user_from_user(user)
+        if session_user is not None and session_user.email != auth_user.email:
+            request.session.clear()
+            raise ApiException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                code="INVALID_REQUEST",
+                message="Not authenticated",
+            )
     else:
-        session_user = _get_session_user(request)
         if session_user is None:
             request.session.clear()
             raise ApiException(
@@ -711,8 +720,10 @@ def login_with_google_code(
         )
     )
 
-    request.session["user_id"] = user.id
     auth_user = _auth_user_from_user(user)
+    request.session.clear()
+    request.session["session_version"] = SESSION_VERSION
+    request.session["user_id"] = user.id
     request.session["user"] = auth_user.model_dump(mode="json")
 
     _delete_legacy_session_cookie(response)
@@ -743,11 +754,19 @@ def _error_response(
     return JSONResponse(status_code=status_code, content=body)
 
 def _get_session_user_id(request: Request) -> str | None:
-    return request.session.get("user_id")
+    if not _has_current_session_version(request):
+        return None
+
+    user_id = request.session.get("user_id")
+    if not isinstance(user_id, str) or not user_id:
+        return None
+
+    return user_id
 
 def _require_session_user_id(request: Request) -> str:
     user_id = _get_session_user_id(request)
     if user_id is None:
+        request.session.clear()
         raise ApiException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             code="INVALID_REQUEST",
@@ -755,6 +774,9 @@ def _require_session_user_id(request: Request) -> str:
         )
 
     return user_id
+
+def _has_current_session_version(request: Request) -> bool:
+    return request.session.get("session_version") == SESSION_VERSION
 
 def _delete_legacy_session_cookie(response: Response) -> None:
     _delete_cookie(response, LEGACY_SESSION_COOKIE_NAME)
@@ -769,6 +791,9 @@ def _delete_cookie(response: Response, cookie_name: str) -> None:
     )
 
 def _get_session_user(request: Request) -> AuthUser | None:
+    if not _has_current_session_version(request):
+        return None
+
     raw_user = request.session.get("user")
     if not isinstance(raw_user, dict):
         return None
