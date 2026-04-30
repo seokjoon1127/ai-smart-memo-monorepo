@@ -5,7 +5,8 @@ import re
 from pathlib import Path
 from typing import Sequence
 
-from schemas import DocCategory, Note, ShareDoc, ShareDocDetail, StoredSchedule
+from schemas import DocCategory, GoogleToken, Note, ShareDoc, ShareDocDetail, StoredSchedule, User
+
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DB_DIR = BASE_DIR / "DB"
@@ -15,6 +16,8 @@ SEED_DIR = DB_DIR / "seed"
 NOTES_PATH = DB_DIR / "notes.json"
 SCHEDULES_PATH = DB_DIR / "schedules.json"
 SHARE_DOCS_PATH = DB_DIR / "share_docs.json"
+USERS_PATH = DB_DIR / "users.json"
+GOOGLE_TOKENS_PATH = DB_DIR / "google_tokens.json"
 
 SEED_NOTES_PATH = SEED_DIR / "notes.json"
 SEED_SCHEDULES_PATH = SEED_DIR / "schedules.json"
@@ -28,7 +31,13 @@ def ensure_storage() -> None: # 스토리지 폴더와 파일이 없으면 생�
     DB_DIR.mkdir(parents=True, exist_ok=True)
     FAISS_DIR.mkdir(parents=True, exist_ok=True)
 
-    for path in (NOTES_PATH, SCHEDULES_PATH, SHARE_DOCS_PATH):
+    for path in (
+        NOTES_PATH,
+        SCHEDULES_PATH,
+        SHARE_DOCS_PATH,
+        USERS_PATH,
+        GOOGLE_TOKENS_PATH,
+    ):
         if not path.exists():
             path.write_text("[]", encoding="utf-8")
 
@@ -63,6 +72,17 @@ def load_notes() -> list[Note]: # json list를 pydantic model 리스트로 변�
 def save_notes(notes: Sequence[Note]) -> None: # pydantic model 리스트를 json list로 변환해서 저장
     _write_json(NOTES_PATH, [note.model_dump(mode="json") for note in notes])
 
+def load_users() -> list[User]:
+    return [User.model_validate(item) for item in _read_json_list(USERS_PATH)]
+
+def save_users(users: Sequence[User]) -> None:
+    _write_json(USERS_PATH, [user.model_dump(mode="json") for user in users])
+
+def load_google_tokens() -> list[GoogleToken]:
+    return [GoogleToken.model_validate(item) for item in _read_json_list(GOOGLE_TOKENS_PATH)]
+
+def save_google_tokens(google_tokens: Sequence[GoogleToken]) -> None:
+    _write_json(GOOGLE_TOKENS_PATH, [google_token.model_dump(mode="json") for google_token in google_tokens])
 
 def list_notes() -> list[Note]: # 최신순으로 정렬
     return sorted(load_notes(), key=lambda note: note.created_at, reverse=True)
@@ -224,6 +244,8 @@ def create_schedule_id(schedules: Sequence[StoredSchedule]) -> str:
 def create_share_doc_id(docs: Sequence[ShareDocDetail]) -> str:
     return _create_next_id("doc", [doc.id for doc in docs])
 
+def create_user_id(users: Sequence[User]) -> str:
+    return _create_next_id("user", [user.id for user in users])
 
 def _create_next_id(prefix: str, values: Sequence[str]) -> str:
     pattern = re.compile(rf"^{re.escape(prefix)}_(\d+)$")
@@ -268,3 +290,84 @@ def reset_to_seed() -> dict[str, int]:
         save_share_docs(updated)
 
     return counts
+
+def get_user_by_google_sub(google_sub: str) -> User | None:
+    return next(
+        (user for user in load_users() if user.google_sub == google_sub),
+        None,
+    )
+
+def get_google_token_by_user_id(user_id: str) -> GoogleToken | None:
+    return next(
+        (token for token in load_google_tokens() if token.user_id == user_id),
+        None,
+    )
+
+def upsert_google_token(token: GoogleToken) -> None:
+    tokens = load_google_tokens()
+    updated = False
+
+    next_tokens: list[GoogleToken] = []
+    for existing_token in tokens:
+        if existing_token.user_id == token.user_id:
+            next_tokens.append(token)
+            updated = True
+        else:
+            next_tokens.append(existing_token)
+    if not updated:
+        next_tokens.append(token)
+
+    save_google_tokens(next_tokens)
+
+def get_or_create_user(
+    *,
+    google_sub: str,
+    email: str,
+    name: str | None,
+    created_at: str,
+) -> User:
+    existing_user = get_user_by_google_sub(google_sub)
+    if existing_user is not None:
+        return existing_user
+
+    users = load_users()
+    user = User(
+        id=create_user_id(users),
+        google_sub=google_sub,
+        email=email,
+        name=name,
+        onboarding_completed=False,
+        created_at=created_at,
+    )
+
+    users.append(user)
+    save_users(users)
+
+    return user
+
+def mark_onboarding_completed(user_id: str) -> User | None:
+    users = load_users()
+    updated_user = None
+
+    next_users: list[User] = []
+    for user in users:
+        if user.id == user_id:
+            updated_user = User(
+                **user.model_dump(),
+                onboarding_completed=True,
+            )
+            next_users.append(updated_user)
+        else:
+            next_users.append(user)
+
+    if updated_user is None:
+        return None
+
+    save_users(next_users)
+    return updated_user
+
+def get_user_by_id(user_id: str) -> User | None:
+    return next(
+        (user for user in load_users() if user.id == user_id),
+        None,
+    )

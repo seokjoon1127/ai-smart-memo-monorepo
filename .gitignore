@@ -17,3 +17,6 @@ backend/.env.*.local
 __pycache__/
 *.py[cod]
 *$py.class
+
+backend/DB/users.json
+backend/DB/google_tokens.json

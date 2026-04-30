@@ -1,4 +1,6 @@
 import { NavLink } from "react-router-dom";
+import { LogOut } from "lucide-react";
+import { useAuth } from "@/contexts/AuthContext";
 
 interface NavItem {
   to: string;
@@ -105,6 +107,14 @@ function navClass(isActive: boolean): string {
 }
 
 export function DemoSidebar() {
+  const { user, isGuest, logout } = useAuth();
+  const fallbackName = user?.email.split("@")[0];
+  const displayName = user?.name ?? fallbackName ?? (isGuest ? "게스트 사용자" : "데모 사용자");
+  const displayEmail =
+    user?.email ?? (isGuest ? "guest@nextwave.com" : "demo@nextwave.com");
+  const avatarText =
+    user?.name?.trim().charAt(0) ?? fallbackName?.charAt(0).toUpperCase() ?? (isGuest ? "G" : "데모");
+
   return (
     <aside className="w-64 bg-white border-r border-toss-gray-100 flex flex-col">
       <div className="px-6 py-5 border-b border-toss-gray-100">
@@ -149,14 +159,25 @@ export function DemoSidebar() {
       <div className="px-3 py-4 border-t border-toss-gray-100">
         <div className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-toss-gray-50">
           <div className="w-8 h-8 bg-toss-gray-100 rounded-full flex items-center justify-center text-xs font-medium text-toss-gray-600">
-            데모
+            {avatarText}
           </div>
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium truncate">데모 사용자</p>
+            <p className="text-sm font-medium truncate">{displayName}</p>
             <p className="text-xs text-toss-gray-400 truncate">
-              demo@nextwave.com
+              {displayEmail}
             </p>
           </div>
+          <button
+            type="button"
+            onClick={() => {
+              void logout();
+            }}
+            className="flex h-8 w-8 items-center justify-center rounded-lg text-toss-gray-400 hover:bg-toss-gray-100 hover:text-toss-gray-700"
+            aria-label="로그아웃"
+            title="로그아웃"
+          >
+            <LogOut className="h-4 w-4" />
+          </button>
         </div>
       </div>
     </aside>

@@ -9,6 +9,7 @@ export const apiClient = axios.create({
   baseURL: BASE_URL,
   timeout: 10000,
   headers: { 'Content-Type': 'application/json' },
+  withCredentials: true,
 })
 
 // 요청 인터셉터 (디버깅용 로깅)

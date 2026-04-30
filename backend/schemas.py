@@ -4,7 +4,6 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-
 EventType = Literal["meeting", "deadline", "event", "other"]
 DocCategory = Literal["meeting", "project", "report", "memo"]
 SuggestionType = Literal["follow_up_meeting", "review_session", "task"]
@@ -194,3 +193,32 @@ class RagSummary(ApiModel):
     summary: str
     source_note_ids: list[str] = Field(default_factory=list)
     generated_at: str
+
+class User(ApiModel):
+    id: str
+    google_sub: str
+    email: str
+    name: str | None = None
+    onboarding_completed: bool = False
+    created_at: str
+
+class GoogleToken(ApiModel):
+    user_id: str
+    access_token: str
+    expires_at: str
+    refresh_token: str | None = None
+    scope: str
+    updated_at: str
+
+class GoogleAuthCodeRequest(ApiModel):
+    code: str
+
+class AuthUser(ApiModel):
+    id: str
+    email: str
+    name: str | None = None
+    onboarding_completed: bool
+
+
+class AuthResponse(ApiModel):
+    user: AuthUser

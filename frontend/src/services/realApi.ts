@@ -16,9 +16,31 @@ import type {
   ShareDoc,
   ShareDocDetail,
   AcceptSuggestionRequest,
+  AuthResponse,
+  GoogleAuthCodeRequest,
 } from '../types/api'
 
 export const realApi = {
+  auth: {
+    me: async (): Promise<AuthResponse> => {
+      const { data } = await apiClient.get<AuthResponse>('/auth/me')
+      return data
+    },
+    loginWithGoogleCode: async (
+      req: GoogleAuthCodeRequest,
+    ): Promise<AuthResponse> => {
+      const { data } = await apiClient.post<AuthResponse>(
+        '/auth/google/code',
+        req,
+      )
+      return data
+    },
+    logout: async (): Promise<{ ok: boolean }> => {
+      const { data } = await apiClient.post<{ ok: boolean }>('/auth/logout')
+      return data
+    },
+  },
+
   memo: {
     list: async (): Promise<Note[]> => {
       const { data } = await apiClient.get<Note[]>('/notes')

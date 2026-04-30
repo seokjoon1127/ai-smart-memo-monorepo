@@ -5,3 +5,6 @@ python-dateutil
 google-genai
 numpy
 faiss-cpu
+requests
+google-auth
+itsdangerous

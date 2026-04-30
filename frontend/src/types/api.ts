@@ -102,6 +102,21 @@ export interface ApiError {
   }
 }
 
+export interface AuthUser {
+  id: string
+  email: string
+  name: string | null
+  onboarding_completed: boolean
+}
+
+export interface AuthResponse {
+  user: AuthUser
+}
+
+export interface GoogleAuthCodeRequest {
+  code: string
+}
+
 // ===== 3. 엔드포인트 Request / Response =====
 
 // EP2. POST /api/notes

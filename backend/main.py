@@ -4,10 +4,13 @@ import logging
 import os
 import sys
 import traceback
+import requests
 from datetime import datetime, timedelta
 from typing import Any
 from uuid import uuid4
 from zoneinfo import ZoneInfo
+from starlette.middleware.sessions import SessionMiddleware
+
 
 logging.basicConfig(level=logging.INFO, stream=sys.stderr, force=True)
 logger = logging.getLogger("ai_smart_memo")
@@ -19,6 +22,9 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from google.auth.transport import requests as google_requests
+from google.oauth2 import id_token
+
 
 from schemas import (
     AcceptSuggestionRequest,
@@ -42,6 +48,10 @@ from schemas import (
     ShareDocDetail,
     StoredSchedule,
     Suggestion,
+    AuthResponse,
+    AuthUser,
+    GoogleAuthCodeRequest,
+    GoogleToken
 )
 from services.ai_service import (
     AIServiceUnavailable,
@@ -69,14 +79,30 @@ from services.db_handler import (
     save_notes,
     save_schedules,
     save_share_docs,
+    get_user_by_id,
+    get_or_create_user,
+    upsert_google_token,
+    get_google_token_by_user_id,
 )
-
 load_dotenv()
 
 KST = ZoneInfo("Asia/Seoul")
 SUGGESTION_TTL = timedelta(hours=24)
 
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
+GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
+SESSION_SECRET = os.getenv("SESSION_SECRET", "dev-session-secret")
+IS_PRODUCTION = os.getenv("ENV", "development") == "production"
+
 app = FastAPI(title="AI Smart Memo Backend", version="1.0.0")
+
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=SESSION_SECRET,
+    same_site="none" if IS_PRODUCTION else "lax",
+    https_only=IS_PRODUCTION,
+)
+
 
 _default_origins = "http://localhost:5173"
 _allowed_origins = [
@@ -518,6 +544,116 @@ def accept_suggestion(
 
     return stored.to_public_schedule()
 
+@app.get("/api/auth/me", response_model=AuthResponse)
+def get_current_user(request: Request) -> AuthResponse:
+    user_id = _get_session_user_id(request)
+
+    if user_id is None:
+        raise ApiException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            code="INVALID_REQUEST",
+            message="Not authenticated",
+        )
+
+    user = get_user_by_id(user_id)
+
+    if user is None:
+        request.session.clear()
+        raise ApiException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            code="INVALID_REQUEST",
+            message="Not authenticated",
+        )
+
+    return AuthResponse(
+        user=AuthUser(
+            id=user.id,
+            email=user.email,
+            name=user.name,
+            onboarding_completed=user.onboarding_completed,
+        )
+    )
+
+@app.post("/api/auth/logout")
+def logout(request: Request) -> dict[str, bool]:
+    request.session.clear()
+    return {"ok": True}
+
+@app.post("/api/auth/google/code", response_model=AuthResponse)
+def login_with_google_code(
+    payload: GoogleAuthCodeRequest,
+    request: Request,
+) -> AuthResponse:
+    token_response = _exchange_google_code(payload.code)
+
+    raw_id_token = token_response.get("id_token")
+    if not raw_id_token:
+        raise ApiException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            code="INVALID_REQUEST",
+            message="Google ID token is missing",
+        )
+    access_token = token_response.get("access_token")
+    if not access_token:
+        raise ApiException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            code="INVALID_REQUEST",
+            message="Google access token is missing",
+        )
+
+
+    id_info = _verify_google_id_token(raw_id_token)
+
+    google_sub = id_info.get("sub")
+    email = id_info.get("email")
+    name = id_info.get("name")
+
+    if not google_sub or not email:
+        raise ApiException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            code="INVALID_REQUEST",
+            message="Google account information is incomplete",
+        )
+
+    user = get_or_create_user(
+        google_sub=google_sub,
+        email=email,
+        name=name,
+        created_at=_now_iso(),
+    )
+
+    expires_in = int(token_response.get("expires_in", 3600))
+    expires_at = (datetime.now(KST) + timedelta(seconds=expires_in)).isoformat(
+        timespec="seconds"
+    )
+
+    existing_token = get_google_token_by_user_id(user.id)
+    refresh_token = token_response.get("refresh_token")
+    if refresh_token is None and existing_token is not None:
+        refresh_token = existing_token.refresh_token
+
+    upsert_google_token(
+        GoogleToken(
+            user_id=user.id,
+            access_token=access_token,
+            refresh_token=refresh_token,
+            expires_at=expires_at,
+            scope=token_response.get("scope", ""),
+            updated_at=_now_iso(),
+        )
+    )
+
+    request.session["user_id"] = user.id
+
+    return AuthResponse(
+        user=AuthUser(
+            id=user.id,
+            email=user.email,
+            name=user.name,
+            onboarding_completed=user.onboarding_completed,
+        )
+    )
+
 
 def _now_iso() -> str:
     return datetime.now(KST).isoformat(timespec="seconds")
@@ -541,6 +677,9 @@ def _error_response(
         body["error"]["detail"] = detail
 
     return JSONResponse(status_code=status_code, content=body)
+
+def _get_session_user_id(request: Request) -> str | None:
+    return request.session.get("user_id")
 
 
 def _validate_schedule_event(
@@ -669,3 +808,63 @@ def _suggestion_type_to_event_type(suggestion_type: str) -> EventType:
     if suggestion_type in {"follow_up_meeting", "review_session"}:
         return "meeting"
     return "other"
+
+def _exchange_google_code(code: str) -> dict[str, Any]:
+    if GOOGLE_CLIENT_ID is None or GOOGLE_CLIENT_SECRET is None:
+        raise ApiException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            code="INTERNAL_ERROR",
+            message="Google OAuth is not configured",
+            detail={"client_id_configured": GOOGLE_CLIENT_ID is not None},
+        )
+
+    try:
+        response = requests.post(
+            "https://oauth2.googleapis.com/token",
+            data={
+                "code": code,
+                "client_id": GOOGLE_CLIENT_ID,
+                "client_secret": GOOGLE_CLIENT_SECRET,
+                "grant_type": "authorization_code",
+                "redirect_uri": "postmessage",
+            },
+            timeout=10,
+        )
+    except requests.RequestException as exc:
+        raise ApiException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            code="EXTERNAL_SERVICE_UNAVAILABLE",
+            message="Google OAuth service is unavailable",
+            detail={"type": exc.__class__.__name__},
+        ) from exc
+
+    if response.status_code >= 400:
+        raise ApiException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            code="INVALID_REQUEST",
+            message="Failed to exchange Google authorization code",
+            detail={"status": response.status_code},
+        )
+
+    return response.json()
+
+def _verify_google_id_token(raw_id_token: str) -> dict[str, Any]:
+    if GOOGLE_CLIENT_ID is None:
+        raise ApiException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            code="INTERNAL_ERROR",
+            message="Google OAuth is not configured",
+        )
+
+    try:
+        return id_token.verify_oauth2_token(
+            raw_id_token,
+            google_requests.Request(),
+            GOOGLE_CLIENT_ID,
+        )
+    except ValueError as exc:
+        raise ApiException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            code="INVALID_REQUEST",
+            message="Invalid Google ID token",
+        ) from exc
