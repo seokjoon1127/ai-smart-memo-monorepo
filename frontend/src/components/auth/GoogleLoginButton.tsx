@@ -46,7 +46,7 @@ export function GoogleLoginButton({ onLogin }: Props) {
             },
         })
 
-        client.requestCode()
+        client.requestCode({ prompt: 'consent' })
     }
 
     return (

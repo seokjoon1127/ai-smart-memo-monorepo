@@ -7,7 +7,6 @@ import traceback
 import requests
 from datetime import datetime, timedelta
 from typing import Any
-from uuid import uuid4
 from zoneinfo import ZoneInfo
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -33,10 +32,12 @@ from schemas import (
     CreateNoteRequest,
     CreateSchedulesRequest,
     CreateSchedulesResponse,
+    CreateGoogleCalendarEventRequest,
     CreateShareDocRequest,
     DocCategory,
     EventType,
     GetShareBoxResponse,
+    GoogleCalendarEventResponse,
     Note,
     ParseRequest,
     ParseResponse,
@@ -77,6 +78,7 @@ from services.db_handler import (
     load_schedules,
     load_share_docs,
     reset_to_seed,
+    replace_schedule,
     save_notes,
     save_schedules,
     save_share_docs,
@@ -89,6 +91,16 @@ load_dotenv()
 
 KST = ZoneInfo("Asia/Seoul")
 SUGGESTION_TTL = timedelta(hours=24)
+GOOGLE_CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.events"
+GOOGLE_CALENDAR_WRITE_SCOPES = {
+    GOOGLE_CALENDAR_SCOPE,
+    "https://www.googleapis.com/auth/calendar",
+}
+GOOGLE_CALENDAR_EVENTS_URL = (
+    "https://www.googleapis.com/calendar/v3/calendars/primary/events"
+)
+GOOGLE_OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token"
+TOKEN_REFRESH_GRACE_SECONDS = 60
 
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
@@ -314,7 +326,6 @@ def create_schedules(payload: CreateSchedulesRequest) -> CreateSchedulesResponse
         _validate_schedule_event(event_date=event.date, start_time=event.start_time, end_time=event.end_time, is_all_day=event.is_all_day)
 
         schedule_id = create_schedule_id(schedules)
-        google_event_id, failure_reason = _sync_google_calendar_mock()
 
         stored = StoredSchedule(
             id=schedule_id,
@@ -327,7 +338,7 @@ def create_schedules(payload: CreateSchedulesRequest) -> CreateSchedulesResponse
             participants=event.participants,
             location=event.location,
             alert_minutes_before=event.alert_minutes_before,
-            google_event_id=google_event_id,
+            google_event_id=None,
             source_note_id=event.source_note_id,
             created_at=_now_iso(),
             rag_summary=None,
@@ -335,14 +346,6 @@ def create_schedules(payload: CreateSchedulesRequest) -> CreateSchedulesResponse
 
         schedules.append(stored)
         created.append(stored.to_public_schedule())
-
-        if failure_reason is not None:
-            failed.append(
-                ScheduleFailure(
-                    schedule_id=schedule_id,
-                    reason=failure_reason,
-                )
-            )
 
     save_schedules(schedules)
 
@@ -508,6 +511,64 @@ def reset_demo_state() -> dict[str, Any]:
     SUGGESTION_SEQUENCE = 0
     return {"ok": True, "counts": counts}
 
+@app.post("/api/google-calendar/events", response_model=GoogleCalendarEventResponse)
+def create_google_calendar_event(
+    payload: CreateGoogleCalendarEventRequest,
+    request: Request,
+) -> GoogleCalendarEventResponse:
+    user_id = _require_session_user_id(request)
+    schedule = get_schedule(payload.schedule_id)
+
+    if schedule is None:
+        raise ApiException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            code="NOT_FOUND",
+            message="Schedule not found",
+            detail={"schedule_id": payload.schedule_id},
+        )
+
+    existing_google_event_id = schedule.google_event_id
+    if existing_google_event_id and not existing_google_event_id.startswith("mock_"):
+        return GoogleCalendarEventResponse(
+            schedule=schedule.to_public_schedule(),
+            google_event_id=existing_google_event_id,
+            html_link=None,
+        )
+
+    token = get_google_token_by_user_id(user_id)
+    if token is None:
+        raise ApiException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            code="INVALID_REQUEST",
+            message="Google Calendar permission is required",
+        )
+    if not GOOGLE_CALENDAR_WRITE_SCOPES.intersection(token.scope.split()):
+        raise ApiException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            code="INVALID_REQUEST",
+            message="Google Calendar permission is missing",
+        )
+
+    google_event = _create_google_calendar_event_with_retry(token, schedule)
+    google_event_id = google_event.get("id")
+
+    if not isinstance(google_event_id, str) or not google_event_id:
+        raise ApiException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            code="EXTERNAL_SERVICE_UNAVAILABLE",
+            message="Google Calendar did not return an event id",
+        )
+
+    schedule.google_event_id = google_event_id
+    replace_schedule(schedule)
+
+    html_link = google_event.get("htmlLink")
+    return GoogleCalendarEventResponse(
+        schedule=schedule.to_public_schedule(),
+        google_event_id=google_event_id,
+        html_link=html_link if isinstance(html_link, str) else None,
+    )
+
 
 @app.post("/api/suggestions/{suggestion_id}/accept", response_model=Schedule)
 def accept_suggestion(
@@ -526,7 +587,6 @@ def accept_suggestion(
 
     schedules = load_schedules()
     schedule_id = create_schedule_id(schedules)
-    google_event_id, _ = _sync_google_calendar_mock()
 
     stored = StoredSchedule(
         id=schedule_id,
@@ -539,7 +599,7 @@ def accept_suggestion(
         participants=[],
         location=None,
         alert_minutes_before=payload.alert_minutes_before,
-        google_event_id=google_event_id,
+        google_event_id=None,
         source_note_id=None,
         created_at=_now_iso(),
         rag_summary=None,
@@ -685,6 +745,17 @@ def _error_response(
 def _get_session_user_id(request: Request) -> str | None:
     return request.session.get("user_id")
 
+def _require_session_user_id(request: Request) -> str:
+    user_id = _get_session_user_id(request)
+    if user_id is None:
+        raise ApiException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            code="INVALID_REQUEST",
+            message="Not authenticated",
+        )
+
+    return user_id
+
 def _delete_legacy_session_cookie(response: Response) -> None:
     _delete_cookie(response, LEGACY_SESSION_COOKIE_NAME)
 
@@ -790,15 +861,6 @@ def _make_preview(full_content: str) -> str:
     return f"{normalized[:200]}..."
 
 
-def _sync_google_calendar_mock() -> tuple[str | None, str | None]:
-    gcal_enabled = os.getenv("GCAL_ENABLED", "false").lower() == "true"
-
-    if not gcal_enabled:
-        return f"mock_{uuid4().hex[:8]}", None
-
-    return None, "Google Calendar integration is not configured"
-
-
 def _rebuild_share_doc_index_task() -> None:
     docs = load_share_docs()
     updated_docs = rebuild_share_doc_index(docs)
@@ -848,6 +910,233 @@ def _suggestion_type_to_event_type(suggestion_type: str) -> EventType:
         return "meeting"
     return "other"
 
+def _get_valid_google_access_token(token: GoogleToken) -> str:
+    expires_at = _parse_token_expires_at(token.expires_at)
+    refresh_at = datetime.now(KST) + timedelta(seconds=TOKEN_REFRESH_GRACE_SECONDS)
+
+    if expires_at > refresh_at:
+        return token.access_token
+
+    return _refresh_google_access_token(token).access_token
+
+def _create_google_calendar_event_with_retry(
+    token: GoogleToken,
+    schedule: StoredSchedule,
+) -> dict[str, Any]:
+    access_token = _get_valid_google_access_token(token)
+
+    try:
+        return _insert_google_calendar_event(access_token, schedule)
+    except ApiException as exc:
+        if (
+            exc.status_code != status.HTTP_401_UNAUTHORIZED
+            or token.refresh_token is None
+        ):
+            raise
+
+    refreshed_token = _refresh_google_access_token(token)
+    return _insert_google_calendar_event(refreshed_token.access_token, schedule)
+
+def _refresh_google_access_token(token: GoogleToken) -> GoogleToken:
+    if GOOGLE_CLIENT_ID is None or GOOGLE_CLIENT_SECRET is None:
+        raise ApiException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            code="INTERNAL_ERROR",
+            message="Google OAuth is not configured",
+            detail={"client_id_configured": GOOGLE_CLIENT_ID is not None},
+        )
+
+    if token.refresh_token is None:
+        raise ApiException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            code="INVALID_REQUEST",
+            message="Google Calendar permission expired. Please login again.",
+        )
+
+    try:
+        response = requests.post(
+            GOOGLE_OAUTH_TOKEN_URL,
+            data={
+                "client_id": GOOGLE_CLIENT_ID,
+                "client_secret": GOOGLE_CLIENT_SECRET,
+                "refresh_token": token.refresh_token,
+                "grant_type": "refresh_token",
+            },
+            timeout=10,
+        )
+    except requests.RequestException as exc:
+        raise ApiException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            code="EXTERNAL_SERVICE_UNAVAILABLE",
+            message="Google OAuth service is unavailable",
+            detail={"type": exc.__class__.__name__},
+        ) from exc
+
+    if response.status_code >= 400:
+        raise ApiException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            code="INVALID_REQUEST",
+            message="Failed to refresh Google access token",
+            detail={"status": response.status_code},
+        )
+
+    payload = response.json()
+    access_token = payload.get("access_token")
+    if not isinstance(access_token, str) or not access_token:
+        raise ApiException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            code="EXTERNAL_SERVICE_UNAVAILABLE",
+            message="Google OAuth did not return an access token",
+        )
+
+    expires_in = int(payload.get("expires_in", 3600))
+    refreshed_token = GoogleToken(
+        user_id=token.user_id,
+        access_token=access_token,
+        refresh_token=token.refresh_token,
+        expires_at=(datetime.now(KST) + timedelta(seconds=expires_in)).isoformat(
+            timespec="seconds"
+        ),
+        scope=payload["scope"]
+        if isinstance(payload.get("scope"), str)
+        else token.scope,
+        updated_at=_now_iso(),
+    )
+    upsert_google_token(refreshed_token)
+    return refreshed_token
+
+def _parse_token_expires_at(value: str) -> datetime:
+    try:
+        expires_at = datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise ApiException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            code="INVALID_REQUEST",
+            message="Stored Google token expiry is invalid. Please login again.",
+        ) from exc
+
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=KST)
+
+    return expires_at.astimezone(KST)
+
+def _insert_google_calendar_event(
+    access_token: str,
+    schedule: StoredSchedule,
+) -> dict[str, Any]:
+    event_payload = _build_google_calendar_event_payload(schedule)
+
+    try:
+        response = requests.post(
+            GOOGLE_CALENDAR_EVENTS_URL,
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Content-Type": "application/json",
+            },
+            json=event_payload,
+            timeout=10,
+        )
+    except requests.RequestException as exc:
+        raise ApiException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            code="EXTERNAL_SERVICE_UNAVAILABLE",
+            message="Google Calendar service is unavailable",
+            detail={"type": exc.__class__.__name__},
+        ) from exc
+
+    if response.status_code == status.HTTP_401_UNAUTHORIZED:
+        raise ApiException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            code="INVALID_REQUEST",
+            message="Google Calendar permission expired. Please login again.",
+        )
+
+    if response.status_code == status.HTTP_403_FORBIDDEN:
+        raise ApiException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            code="INVALID_REQUEST",
+            message="Google Calendar permission is missing",
+        )
+
+    if response.status_code >= 400:
+        raise ApiException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            code="EXTERNAL_SERVICE_UNAVAILABLE",
+            message="Failed to create Google Calendar event",
+            detail={"status": response.status_code},
+        )
+
+    return response.json()
+
+def _build_google_calendar_event_payload(schedule: StoredSchedule) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "summary": schedule.title,
+        "reminders": {
+            "useDefault": False,
+            "overrides": [
+                {
+                    "method": "popup",
+                    "minutes": schedule.alert_minutes_before,
+                }
+            ],
+        },
+    }
+
+    if schedule.location:
+        payload["location"] = schedule.location
+
+    description_lines = ["AI Smart Memo에서 추가한 일정입니다."]
+    if schedule.participants:
+        description_lines.append(f"참석자: {', '.join(schedule.participants)}")
+    if schedule.source_note_id:
+        description_lines.append(f"원본 메모 ID: {schedule.source_note_id}")
+    payload["description"] = "\n".join(description_lines)
+
+    if schedule.is_all_day:
+        payload["start"] = {"date": schedule.date}
+        payload["end"] = {"date": _add_days_to_date(schedule.date, 1)}
+        return payload
+
+    start_time = schedule.start_time
+    if start_time is None:
+        raise ApiException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            code="INVALID_REQUEST",
+            message="Timed schedule requires start_time",
+        )
+
+    end_time = schedule.end_time or _add_minutes_to_time(start_time, 60)
+    start_datetime = _combine_date_time(schedule.date, start_time)
+    end_datetime = _combine_date_time(schedule.date, end_time)
+
+    if end_datetime <= start_datetime:
+        end_datetime += timedelta(days=1)
+
+    payload["start"] = {
+        "dateTime": start_datetime.isoformat(timespec="minutes"),
+        "timeZone": "Asia/Seoul",
+    }
+    payload["end"] = {
+        "dateTime": end_datetime.isoformat(timespec="minutes"),
+        "timeZone": "Asia/Seoul",
+    }
+
+    return payload
+
+def _combine_date_time(date_value: str, time_value: str) -> datetime:
+    return datetime.strptime(
+        f"{date_value} {time_value}",
+        "%Y-%m-%d %H:%M",
+    ).replace(tzinfo=KST)
+
+def _add_days_to_date(date_value: str, days: int) -> str:
+    parsed = datetime.strptime(date_value, "%Y-%m-%d")
+    return (parsed + timedelta(days=days)).strftime("%Y-%m-%d")
+
+def _add_minutes_to_time(time_value: str, minutes: int) -> str:
+    parsed = datetime.strptime(time_value, "%H:%M")
+    return (parsed + timedelta(minutes=minutes)).strftime("%H:%M")
+
 def _exchange_google_code(code: str) -> dict[str, Any]:
     if GOOGLE_CLIENT_ID is None or GOOGLE_CLIENT_SECRET is None:
         raise ApiException(
@@ -859,7 +1148,7 @@ def _exchange_google_code(code: str) -> dict[str, Any]:
 
     try:
         response = requests.post(
-            "https://oauth2.googleapis.com/token",
+            GOOGLE_OAUTH_TOKEN_URL,
             data={
                 "code": code,
                 "client_id": GOOGLE_CLIENT_ID,

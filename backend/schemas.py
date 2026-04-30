@@ -189,6 +189,14 @@ class CreateShareDocRequest(ApiModel):
 class AcceptSuggestionRequest(ApiModel):
     alert_minutes_before: int = Field(..., ge=0)
 
+class CreateGoogleCalendarEventRequest(ApiModel):
+    schedule_id: str
+
+class GoogleCalendarEventResponse(ApiModel):
+    schedule: Schedule
+    google_event_id: str
+    html_link: str | None = None
+
 class RagSummary(ApiModel):
     summary: str
     source_note_ids: list[str] = Field(default_factory=list)

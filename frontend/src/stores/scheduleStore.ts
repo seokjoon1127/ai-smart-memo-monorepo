@@ -2,10 +2,11 @@ import { create } from "zustand";
 import {
   isApiError,
   type CreateScheduleEventInput,
+  type GoogleCalendarEventResponse,
   type Schedule,
   type ScheduleDetail,
 } from "@/types/api";
-import { scheduleApi, suggestionApi } from "@/services";
+import { calendarApi, scheduleApi, suggestionApi } from "@/services";
 import { useUiStore } from "./uiStore";
 
 export type ScheduleStatus = "idle" | "submitting" | "fetching" | "error";
@@ -25,6 +26,9 @@ interface ScheduleState {
   ) => Promise<Schedule[] | null>;
   fetchScheduleDetail: (id: string) => Promise<void>;
   fetchCalendarEvents: (from: string, to: string) => Promise<void>;
+  syncGoogleCalendar: (
+    scheduleId: string,
+  ) => Promise<GoogleCalendarEventResponse | null>;
   acceptSuggestion: (
     suggestionId: string,
     alertMinutesBefore?: number,
@@ -88,6 +92,42 @@ export const useScheduleStore = create<ScheduleState>((set, get) => ({
         ? error.error.message
         : "일정을 불러오지 못했어요";
       set({ status: "error", errorMessage: message });
+    }
+  },
+
+  syncGoogleCalendar: async (scheduleId) => {
+    try {
+      const response = await calendarApi.createGoogleEvent({
+        schedule_id: scheduleId,
+      });
+      set((state) => {
+        const updateSchedule = (schedule: Schedule) =>
+          schedule.id === scheduleId ? response.schedule : schedule;
+        const existingDetail = state.scheduleDetails[scheduleId];
+
+        return {
+          schedules: state.schedules.map(updateSchedule),
+          calendarEvents: state.calendarEvents.map(updateSchedule),
+          scheduleDetails: {
+            ...state.scheduleDetails,
+            ...(existingDetail
+              ? {
+                  [scheduleId]: {
+                    ...existingDetail,
+                    ...response.schedule,
+                  },
+                }
+              : {}),
+          },
+        };
+      });
+      return response;
+    } catch (error) {
+      const message = isApiError(error)
+        ? error.error.message
+        : "Google Calendar에 추가하지 못했어요";
+      useUiStore.getState().showToast(message);
+      return null;
     }
   },
 

@@ -16,7 +16,7 @@ interface GoogleCodeResponse {
 }
 
 interface GoogleCodeClient {
-  requestCode: () => void
+  requestCode: (overrideConfig?: GoogleCodeClientRequestConfig) => void
 }
 
 interface GoogleCodeClientConfig {
@@ -24,6 +24,10 @@ interface GoogleCodeClientConfig {
   scope: string
   ux_mode: 'popup'
   callback: (response: GoogleCodeResponse) => void
+}
+
+interface GoogleCodeClientRequestConfig {
+  prompt?: string
 }
 
 interface Window {

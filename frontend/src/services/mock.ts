@@ -3,6 +3,8 @@ import type {
   ApiError,
   ApiErrorCode,
   ConflictInfo,
+  CreateGoogleCalendarEventRequest,
+  GoogleCalendarEventResponse,
   CreateNoteRequest,
   CreateScheduleEventInput,
   CreateSchedulesRequest,
@@ -256,7 +258,7 @@ export const mockApi = {
             participants: event.participants,
             location: event.location,
             alert_minutes_before: event.alert_minutes_before,
-            google_event_id: `mock_gcal_${Math.random().toString(36).slice(2, 10)}`,
+            google_event_id: null,
             source_note_id: event.source_note_id,
             created_at: nowIso(),
           };
@@ -297,6 +299,31 @@ export const mockApi = {
         return { has_conflict: false };
       }
       return findConflict(query.date, query.start_time, query.end_time);
+    },
+
+    createGoogleEvent: async (
+      req: CreateGoogleCalendarEventRequest,
+    ): Promise<GoogleCalendarEventResponse> => {
+      await sleep(350);
+      const schedule = schedulesStore.find((s) => s.id === req.schedule_id);
+      if (!schedule) {
+        throwApiError("NOT_FOUND", "Schedule not found", {
+          schedule_id: req.schedule_id,
+        });
+      }
+
+      const googleEventId =
+        schedule.google_event_id && !schedule.google_event_id.startsWith("mock_")
+          ? schedule.google_event_id
+          : `gcal_${Math.random().toString(36).slice(2, 10)}`;
+
+      schedule.google_event_id = googleEventId;
+
+      return {
+        schedule,
+        google_event_id: googleEventId,
+        html_link: `https://calendar.google.com/calendar/event?eid=${googleEventId}`,
+      };
     },
   },
 
@@ -394,7 +421,7 @@ export const mockApi = {
         participants: [],
         location: null,
         alert_minutes_before: req.alert_minutes_before,
-        google_event_id: `mock_gcal_${Math.random().toString(36).slice(2, 10)}`,
+        google_event_id: null,
         source_note_id: null,
         created_at: nowIso(),
       };

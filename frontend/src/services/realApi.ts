@@ -17,6 +17,8 @@ import type {
   ShareDocDetail,
   AcceptSuggestionRequest,
   AuthResponse,
+  CreateGoogleCalendarEventRequest,
+  GoogleCalendarEventResponse,
   GoogleAuthCodeRequest,
 } from '../types/api'
 
@@ -91,6 +93,15 @@ export const realApi = {
       const { data } = await apiClient.get<ConflictInfo>(
         '/calendar/conflicts',
         { params: query },
+      )
+      return data
+    },
+    createGoogleEvent: async (
+      req: CreateGoogleCalendarEventRequest,
+    ): Promise<GoogleCalendarEventResponse> => {
+      const { data } = await apiClient.post<GoogleCalendarEventResponse>(
+        '/google-calendar/events',
+        req,
       )
       return data
     },

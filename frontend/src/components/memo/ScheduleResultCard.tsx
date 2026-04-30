@@ -1,5 +1,8 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import { CalendarPlus, Check, Loader2 } from "lucide-react";
 import { useScheduleStore } from "@/stores/scheduleStore";
+import { useUiStore } from "@/stores/uiStore";
+import { useAuth } from "@/contexts/AuthContext";
 import type { EventType, Schedule } from "@/types/api";
 import { formatDateKo, formatTimeKo } from "@/utils/date";
 import { RelatedDocCard } from "./RelatedDocCard";
@@ -29,10 +32,14 @@ const typeBadge: Record<EventType, { label: string; className: string }> = {
 };
 
 export function ScheduleResultCard({ schedule }: Props) {
+  const [isSyncingGoogle, setIsSyncingGoogle] = useState(false);
+  const { user, isGuest } = useAuth();
+  const showToast = useUiStore((s) => s.showToast);
   const detail = useScheduleStore(
     (s) => s.scheduleDetails[schedule.id],
   );
   const fetchScheduleDetail = useScheduleStore((s) => s.fetchScheduleDetail);
+  const syncGoogleCalendar = useScheduleStore((s) => s.syncGoogleCalendar);
 
   useEffect(() => {
     void fetchScheduleDetail(schedule.id);
@@ -42,6 +49,36 @@ export function ScheduleResultCard({ schedule }: Props) {
   const timeText = schedule.is_all_day
     ? "종일"
     : formatTimeKo(schedule.start_time);
+  const isSyncedToGoogle =
+    schedule.google_event_id !== null &&
+    !schedule.google_event_id.startsWith("mock_");
+
+  const handleGoogleCalendarClick = async () => {
+    if (isSyncedToGoogle || isSyncingGoogle) return;
+
+    if (!user || isGuest) {
+      showToast("Google Calendar 연동은 Google 로그인 후 사용할 수 있어요");
+      return;
+    }
+
+    setIsSyncingGoogle(true);
+    const result = await syncGoogleCalendar(schedule.id);
+    setIsSyncingGoogle(false);
+
+    if (!result) return;
+
+    showToast(
+      "Google Calendar에 추가했어요",
+      result.html_link
+        ? {
+            label: "열기",
+            onClick: () => {
+              window.open(result.html_link ?? "", "_blank", "noopener,noreferrer");
+            },
+          }
+        : undefined,
+    );
+  };
 
   return (
     <div className="bg-white rounded-2xl border border-toss-gray-100 p-6 mb-4">
@@ -66,6 +103,32 @@ export function ScheduleResultCard({ schedule }: Props) {
           수정
         </button>
       </div>
+
+      <button
+        type="button"
+        onClick={handleGoogleCalendarClick}
+        disabled={isSyncedToGoogle || isSyncingGoogle}
+        className={`mb-4 flex h-11 w-full items-center justify-center gap-2 rounded-lg border px-3 text-sm font-medium ${
+          isSyncedToGoogle
+            ? "border-toss-success-bg bg-toss-success-bg text-toss-success"
+            : "border-toss-gray-200 bg-white text-toss-gray-700 hover:bg-toss-gray-50"
+        } disabled:cursor-not-allowed disabled:opacity-80`}
+      >
+        {isSyncingGoogle ? (
+          <Loader2 className="h-4 w-4 animate-spin" />
+        ) : isSyncedToGoogle ? (
+          <Check className="h-4 w-4" />
+        ) : (
+          <CalendarPlus className="h-4 w-4" />
+        )}
+        <span>
+          {isSyncingGoogle
+            ? "Google Calendar에 추가 중..."
+            : isSyncedToGoogle
+              ? "Google Calendar 추가 완료"
+              : "Google Calendar에도 추가"}
+        </span>
+      </button>
 
       <div className="grid grid-cols-2 gap-2 mb-4">
         <div className="bg-toss-gray-25 rounded-lg p-3">

@@ -3,8 +3,14 @@ import { render, screen } from '@testing-library/react'
 import { RouterProvider, createMemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { router } from './routes'
+import { AuthProvider } from '@/contexts/AuthContext'
 
 const routesConfig = router.routes
+const testAuthValue = {
+  user: null,
+  isGuest: true,
+  logout: () => {},
+}
 
 function renderRoute(path: string) {
   const memoryRouter = createMemoryRouter(routesConfig, {
@@ -15,7 +21,9 @@ function renderRoute(path: string) {
   })
   return render(
     <QueryClientProvider client={queryClient}>
-      <RouterProvider router={memoryRouter} />
+      <AuthProvider value={testAuthValue}>
+        <RouterProvider router={memoryRouter} />
+      </AuthProvider>
     </QueryClientProvider>,
   )
 }

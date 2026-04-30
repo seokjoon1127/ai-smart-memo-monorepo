@@ -66,7 +66,7 @@ function StepThree() {
           STEP 3 / 3 · 등록 완료
         </p>
         <span className="text-xs px-2.5 py-1 bg-toss-blue-light text-toss-blue rounded-full font-medium">
-          Google Calendar 동기화됨
+          웹 캘린더 등록 완료
         </span>
       </div>
       <h2 className="text-3xl font-bold mb-2 leading-tight">

@@ -117,6 +117,16 @@ export interface GoogleAuthCodeRequest {
   code: string
 }
 
+export interface CreateGoogleCalendarEventRequest {
+  schedule_id: string
+}
+
+export interface GoogleCalendarEventResponse {
+  schedule: Schedule
+  google_event_id: string
+  html_link: string | null
+}
+
 // ===== 3. 엔드포인트 Request / Response =====
 
 // EP2. POST /api/notes

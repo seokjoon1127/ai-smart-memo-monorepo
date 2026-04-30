@@ -7,6 +7,9 @@ vi.mock("@/services", () => ({
     list: vi.fn(),
     getDetail: vi.fn(),
   },
+  calendarApi: {
+    createGoogleEvent: vi.fn(),
+  },
   suggestionApi: {
     accept: vi.fn(),
   },
@@ -14,7 +17,7 @@ vi.mock("@/services", () => ({
 
 import { useScheduleStore } from "./scheduleStore";
 import { useUiStore } from "./uiStore";
-import { scheduleApi, suggestionApi } from "@/services";
+import { calendarApi, scheduleApi, suggestionApi } from "@/services";
 
 const sampleSchedule: Schedule = {
   id: "sch_100",
@@ -122,6 +125,50 @@ describe("scheduleStore.fetchCalendarEvents", () => {
     const state = useScheduleStore.getState();
     expect(state.calendarEvents).toHaveLength(1);
     expect(state.status).toBe("idle");
+  });
+});
+
+describe("scheduleStore.syncGoogleCalendar", () => {
+  it("성공: schedule의 google_event_id를 갱신함", async () => {
+    const unsyncedSchedule = { ...sampleSchedule, google_event_id: null };
+    const syncedSchedule = {
+      ...sampleSchedule,
+      google_event_id: "google_event_1",
+    };
+    useScheduleStore.setState({
+      schedules: [unsyncedSchedule],
+      calendarEvents: [unsyncedSchedule],
+    });
+    vi.mocked(calendarApi.createGoogleEvent).mockResolvedValue({
+      schedule: syncedSchedule,
+      google_event_id: "google_event_1",
+      html_link: "https://calendar.google.com/calendar/event?eid=1",
+    });
+
+    const result = await useScheduleStore
+      .getState()
+      .syncGoogleCalendar("sch_100");
+
+    expect(result?.google_event_id).toBe("google_event_1");
+    expect(useScheduleStore.getState().schedules[0].google_event_id).toBe(
+      "google_event_1",
+    );
+    expect(useScheduleStore.getState().calendarEvents[0].google_event_id).toBe(
+      "google_event_1",
+    );
+  });
+
+  it("실패: null 반환, 토스트 노출", async () => {
+    vi.mocked(calendarApi.createGoogleEvent).mockRejectedValue({
+      error: { code: "INVALID_REQUEST", message: "Google 권한이 필요해요" },
+    });
+
+    const result = await useScheduleStore
+      .getState()
+      .syncGoogleCalendar("sch_404");
+
+    expect(result).toBe(null);
+    expect(useUiStore.getState().toastMessage).toBe("Google 권한이 필요해요");
   });
 });
 

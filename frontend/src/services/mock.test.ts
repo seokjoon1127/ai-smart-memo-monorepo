@@ -17,6 +17,7 @@ describe('mockApi structure', () => {
 
   it('exposes calendar namespace', () => {
     expect(typeof mockApi.calendar.getConflicts).toBe('function')
+    expect(typeof mockApi.calendar.createGoogleEvent).toBe('function')
   })
 
   it('exposes shareBox namespace', () => {
