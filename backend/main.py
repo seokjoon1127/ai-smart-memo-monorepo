@@ -1250,7 +1250,7 @@ def _insert_google_calendar_event(
         )
 
     if response.status_code >= 400:
-        google_error_detail = _google_error_detail(response)
+        google_error_detail = _google_error_detail(response, event_payload)
         logger.warning(
             "Google Calendar insert failed: %s",
             google_error_detail,
@@ -1264,8 +1264,13 @@ def _insert_google_calendar_event(
 
     return response.json()
 
-def _google_error_detail(response: requests.Response) -> dict[str, Any]:
+def _google_error_detail(
+    response: requests.Response,
+    event_payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     detail: dict[str, Any] = {"status": response.status_code}
+    if event_payload is not None:
+        detail["event_payload"] = _google_event_payload_for_debug(event_payload)
 
     try:
         payload = response.json()
@@ -1295,6 +1300,19 @@ def _google_error_detail(response: requests.Response) -> dict[str, Any]:
 
     detail["body"] = payload
     return detail
+
+def _google_event_payload_for_debug(event_payload: dict[str, Any]) -> dict[str, Any]:
+    debug_payload: dict[str, Any] = {}
+    for key in ("summary", "start", "end", "location", "reminders"):
+        value = event_payload.get(key)
+        if value is not None:
+            debug_payload[key] = value
+
+    description = event_payload.get("description")
+    if isinstance(description, str):
+        debug_payload["description_length"] = len(description)
+
+    return debug_payload
 
 def _google_error_message(detail: dict[str, Any]) -> str:
     message = detail.get("item_message") or detail.get("message")
@@ -1352,15 +1370,18 @@ def _build_google_calendar_event_payload(schedule: StoredSchedule) -> dict[str, 
         end_datetime += timedelta(days=1)
 
     payload["start"] = {
-        "dateTime": start_datetime.isoformat(timespec="minutes"),
+        "dateTime": _format_google_calendar_datetime(start_datetime),
         "timeZone": "Asia/Seoul",
     }
     payload["end"] = {
-        "dateTime": end_datetime.isoformat(timespec="minutes"),
+        "dateTime": _format_google_calendar_datetime(end_datetime),
         "timeZone": "Asia/Seoul",
     }
 
     return payload
+
+def _format_google_calendar_datetime(value: datetime) -> str:
+    return value.astimezone(KST).strftime("%Y-%m-%dT%H:%M:%S")
 
 def _combine_date_time(date_value: str, time_value: str) -> datetime:
     return datetime.strptime(
