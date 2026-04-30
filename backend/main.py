@@ -51,7 +51,8 @@ from schemas import (
     AuthResponse,
     AuthUser,
     GoogleAuthCodeRequest,
-    GoogleToken
+    GoogleToken,
+    User,
 )
 from services.ai_service import (
     AIServiceUnavailable,
@@ -558,12 +559,16 @@ def get_current_user(request: Request) -> AuthResponse:
     user = get_user_by_id(user_id)
 
     if user is None:
-        request.session.clear()
-        raise ApiException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            code="INVALID_REQUEST",
-            message="Not authenticated",
-        )
+        session_user = _get_session_user(request)
+        if session_user is None:
+            request.session.clear()
+            raise ApiException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                code="INVALID_REQUEST",
+                message="Not authenticated",
+            )
+
+        return AuthResponse(user=session_user)
 
     return AuthResponse(
         user=AuthUser(
@@ -644,14 +649,10 @@ def login_with_google_code(
     )
 
     request.session["user_id"] = user.id
+    request.session["user"] = _auth_user_from_user(user).model_dump(mode="json")
 
     return AuthResponse(
-        user=AuthUser(
-            id=user.id,
-            email=user.email,
-            name=user.name,
-            onboarding_completed=user.onboarding_completed,
-        )
+        user=_auth_user_from_user(user)
     )
 
 
@@ -680,6 +681,29 @@ def _error_response(
 
 def _get_session_user_id(request: Request) -> str | None:
     return request.session.get("user_id")
+
+def _get_session_user(request: Request) -> AuthUser | None:
+    raw_user = request.session.get("user")
+    if not isinstance(raw_user, dict):
+        return None
+
+    try:
+        session_user = AuthUser.model_validate(raw_user)
+    except ValueError:
+        return None
+
+    if session_user.id != request.session.get("user_id"):
+        return None
+
+    return session_user
+
+def _auth_user_from_user(user: User) -> AuthUser:
+    return AuthUser(
+        id=user.id,
+        email=user.email,
+        name=user.name,
+        onboarding_completed=user.onboarding_completed,
+    )
 
 
 def _validate_schedule_event(
