@@ -22,6 +22,7 @@ interface GoogleCodeClient {
 interface GoogleCodeClientConfig {
   client_id: string
   scope: string
+  include_granted_scopes?: boolean
   ux_mode: 'popup'
   callback: (response: GoogleCodeResponse) => void
 }

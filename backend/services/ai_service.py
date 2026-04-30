@@ -237,14 +237,15 @@ def search_related_share_docs(
     limit: int = 3,
     min_score: float = RELATED_DOC_THRESHOLD,
 ) -> list[RelatedDoc]:
+    docs_list = list(docs)
     if faiss is None or np is None:
-        return []
+        return _search_related_share_docs_by_text(schedule=schedule, docs=docs_list, limit=limit)
     if not INDEX_PATH.exists() or not ID_MAP_PATH.exists():
-        return []
+        return _search_related_share_docs_by_text(schedule=schedule, docs=docs_list, limit=limit)
 
-    indexed_docs = {doc.id: doc for doc in docs if doc.indexed}
+    indexed_docs = {doc.id: doc for doc in docs_list if doc.indexed}
     if not indexed_docs:
-        return []
+        return _search_related_share_docs_by_text(schedule=schedule, docs=docs_list, limit=limit)
 
     try:
         query_vector = _embed_texts(
@@ -252,13 +253,13 @@ def search_related_share_docs(
             task_type="RETRIEVAL_QUERY",
         )[0]
     except (AIServiceUnavailable, IndexError):
-        return []
+        return _search_related_share_docs_by_text(schedule=schedule, docs=docs_list, limit=limit)
 
     index = faiss.read_index(str(INDEX_PATH))
     id_map = json.loads(ID_MAP_PATH.read_text(encoding="utf-8"))
 
     if not id_map:
-        return []
+        return _search_related_share_docs_by_text(schedule=schedule, docs=docs_list, limit=limit)
 
     row_lookup = {
         int(entry["faiss_row"]): entry["doc_id"]
@@ -307,7 +308,7 @@ def search_related_share_docs(
         reverse=True,
     )
 
-    return [
+    related_docs = [
         RelatedDoc(
             doc_id=doc.id,
             title=doc.title,
@@ -316,6 +317,67 @@ def search_related_share_docs(
             created_at=doc.created_at,
         )
         for final_score, _, doc in candidates[:limit]
+    ]
+    if related_docs:
+        return related_docs
+
+    return _search_related_share_docs_by_text(schedule=schedule, docs=docs_list, limit=limit)
+
+
+def _search_related_share_docs_by_text(
+    *,
+    schedule: Schedule,
+    docs: Sequence[ShareDocDetail],
+    limit: int,
+) -> list[RelatedDoc]:
+    candidates: list[tuple[float, ShareDocDetail]] = []
+    title_keywords = _title_keywords(schedule.title)
+    participant_terms = [
+        participant
+        for participant in schedule.participants
+        if participant.strip()
+    ]
+
+    for doc in docs:
+        title_and_tags = _normalize_for_match(" ".join([doc.title, *doc.tags]))
+        body_text = _normalize_for_match(f"{doc.preview} {doc.full_content}")
+        score = 0.0
+
+        if _contains_any(title_and_tags, participant_terms):
+            score += 0.45
+        elif _contains_any(body_text, participant_terms):
+            score += 0.3
+
+        if _contains_any(title_and_tags, title_keywords):
+            score += 0.35
+        elif _contains_any(body_text, title_keywords):
+            score += 0.25
+
+        if schedule.location and _contains_any(
+            body_text,
+            [schedule.location],
+        ):
+            score += 0.15
+
+        if _category_matches(schedule, doc):
+            score += 0.2
+
+        if score <= 0:
+            continue
+
+        candidates.append((min(score, 1.0), doc))
+
+    candidates.sort(key=lambda item: (item[0], item[1].created_at), reverse=True)
+
+    return [
+        RelatedDoc(
+            doc_id=doc.id,
+            title=doc.title,
+            preview=doc.preview,
+            relevance_score=round(score, 2),
+            created_at=doc.created_at,
+        )
+        for score, doc in candidates[:limit]
     ]
 
 

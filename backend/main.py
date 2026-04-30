@@ -4,6 +4,7 @@ import logging
 import os
 import secrets
 import sys
+import time
 import traceback
 import requests
 from datetime import datetime, timedelta
@@ -103,6 +104,14 @@ GOOGLE_CALENDAR_EVENTS_URL = (
 )
 GOOGLE_OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token"
 TOKEN_REFRESH_GRACE_SECONDS = 60
+GOOGLE_CALENDAR_INSERT_ATTEMPTS = 3
+GOOGLE_CALENDAR_RETRY_STATUSES = {
+    status.HTTP_429_TOO_MANY_REQUESTS,
+    status.HTTP_500_INTERNAL_SERVER_ERROR,
+    status.HTTP_502_BAD_GATEWAY,
+    status.HTTP_503_SERVICE_UNAVAILABLE,
+    status.HTTP_504_GATEWAY_TIMEOUT,
+}
 
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
@@ -797,6 +806,9 @@ def login_with_google_code(
     refresh_token = token_response.get("refresh_token")
     if refresh_token is None and existing_token is not None:
         refresh_token = existing_token.refresh_token
+    scope = token_response.get("scope")
+    if not isinstance(scope, str) or not scope.strip():
+        scope = existing_token.scope if existing_token is not None else ""
 
     upsert_google_token(
         GoogleToken(
@@ -804,7 +816,7 @@ def login_with_google_code(
             access_token=access_token,
             refresh_token=refresh_token,
             expires_at=expires_at,
-            scope=token_response.get("scope", ""),
+            scope=scope,
             updated_at=_now_iso(),
         )
     )
@@ -1181,25 +1193,47 @@ def _insert_google_calendar_event(
     schedule: StoredSchedule,
 ) -> dict[str, Any]:
     event_payload = _build_google_calendar_event_payload(schedule)
+    last_response: requests.Response | None = None
 
-    try:
-        response = requests.post(
-            GOOGLE_CALENDAR_EVENTS_URL,
-            headers={
-                "Authorization": f"Bearer {access_token}",
-                "Content-Type": "application/json",
-            },
-            json=event_payload,
-            timeout=10,
-        )
-    except requests.RequestException as exc:
+    for attempt in range(GOOGLE_CALENDAR_INSERT_ATTEMPTS):
+        try:
+            response = requests.post(
+                GOOGLE_CALENDAR_EVENTS_URL,
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "Content-Type": "application/json",
+                },
+                json=event_payload,
+                timeout=10,
+            )
+        except requests.RequestException as exc:
+            if attempt < GOOGLE_CALENDAR_INSERT_ATTEMPTS - 1:
+                time.sleep(0.5 * (attempt + 1))
+                continue
+            raise ApiException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                code="EXTERNAL_SERVICE_UNAVAILABLE",
+                message="Google Calendar service is unavailable",
+                detail={"type": exc.__class__.__name__},
+            ) from exc
+
+        last_response = response
+        if (
+            response.status_code in GOOGLE_CALENDAR_RETRY_STATUSES
+            and attempt < GOOGLE_CALENDAR_INSERT_ATTEMPTS - 1
+        ):
+            time.sleep(0.5 * (attempt + 1))
+            continue
+        break
+
+    if last_response is None:
         raise ApiException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             code="EXTERNAL_SERVICE_UNAVAILABLE",
             message="Google Calendar service is unavailable",
-            detail={"type": exc.__class__.__name__},
-        ) from exc
+        )
 
+    response = last_response
     if response.status_code == status.HTTP_401_UNAUTHORIZED:
         raise ApiException(
             status_code=status.HTTP_401_UNAUTHORIZED,

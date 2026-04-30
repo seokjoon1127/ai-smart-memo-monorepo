@@ -25,6 +25,7 @@ export function GoogleLoginButton({ onLogin }: Props) {
         const client = window.google.accounts.oauth2.initCodeClient({
             client_id: import.meta.env.VITE_GOOGLE_CLIENT_ID,
             scope: GOOGLE_SCOPES,
+            include_granted_scopes: true,
             ux_mode: 'popup',
             callback: async (response) => {
                 if (!response.code) {
