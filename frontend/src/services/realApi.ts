@@ -8,6 +8,7 @@ import type {
   Schedule,
   GetSchedulesQuery,
   ScheduleDetail,
+  DeleteScheduleResponse,
   GetConflictsQuery,
   ConflictInfo,
   GetShareBoxQuery,
@@ -84,6 +85,12 @@ export const realApi = {
     },
     getDetail: async (id: string): Promise<ScheduleDetail> => {
       const { data } = await apiClient.get<ScheduleDetail>(`/schedules/${id}`)
+      return data
+    },
+    delete: async (id: string): Promise<DeleteScheduleResponse> => {
+      const { data } = await apiClient.delete<DeleteScheduleResponse>(
+        `/schedules/${id}`,
+      )
       return data
     },
   },

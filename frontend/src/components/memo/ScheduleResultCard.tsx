@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { CalendarPlus, Check, Loader2 } from "lucide-react";
+import { CalendarPlus, Check, Loader2, Trash2 } from "lucide-react";
 import { useScheduleStore } from "@/stores/scheduleStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useAuth } from "@/contexts/AuthContext";
@@ -33,6 +33,7 @@ const typeBadge: Record<EventType, { label: string; className: string }> = {
 
 export function ScheduleResultCard({ schedule }: Props) {
   const [isSyncingGoogle, setIsSyncingGoogle] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
   const { user, isGuest } = useAuth();
   const showToast = useUiStore((s) => s.showToast);
   const detail = useScheduleStore(
@@ -40,6 +41,7 @@ export function ScheduleResultCard({ schedule }: Props) {
   );
   const fetchScheduleDetail = useScheduleStore((s) => s.fetchScheduleDetail);
   const syncGoogleCalendar = useScheduleStore((s) => s.syncGoogleCalendar);
+  const deleteSchedule = useScheduleStore((s) => s.deleteSchedule);
 
   useEffect(() => {
     void fetchScheduleDetail(schedule.id);
@@ -80,6 +82,18 @@ export function ScheduleResultCard({ schedule }: Props) {
     );
   };
 
+  const handleDeleteClick = async () => {
+    if (!schedule.can_delete || isDeleting) return;
+
+    setIsDeleting(true);
+    const deleted = await deleteSchedule(schedule.id);
+    setIsDeleting(false);
+
+    if (deleted) {
+      showToast("일정을 삭제했어요");
+    }
+  };
+
   return (
     <div className="bg-white rounded-2xl border border-toss-gray-100 p-6 mb-4">
       <div className="flex items-start justify-between mb-4">
@@ -96,12 +110,21 @@ export function ScheduleResultCard({ schedule }: Props) {
             {formatDateKo(schedule.date)} · {timeText}
           </p>
         </div>
-        <button
-          type="button"
-          className="text-xs px-3 py-1.5 bg-toss-gray-50 hover:bg-toss-gray-100 text-toss-gray-700 rounded-lg font-medium"
-        >
-          수정
-        </button>
+        {schedule.can_delete && (
+          <button
+            type="button"
+            onClick={handleDeleteClick}
+            disabled={isDeleting}
+            className="flex h-8 items-center gap-1.5 rounded-lg bg-toss-gray-50 px-3 text-xs font-medium text-toss-gray-700 hover:bg-toss-gray-100 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {isDeleting ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Trash2 className="h-3.5 w-3.5" />
+            )}
+            삭제
+          </button>
+        )}
       </div>
 
       <button

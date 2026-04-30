@@ -24,6 +24,7 @@ export interface Note {
   content: string
   created_at: string
   indexed: boolean
+  owner_user_id?: string | null
 }
 
 export interface ConflictInfo {
@@ -59,6 +60,7 @@ export interface Schedule {
   google_event_id: string | null
   source_note_id: string | null
   created_at: string
+  can_delete?: boolean
 }
 
 export interface ShareDoc {
@@ -184,6 +186,11 @@ export interface ScheduleDetail extends Schedule {
   ai_suggestion: Suggestion | null
 }
 export type GetScheduleDetailResponse = ScheduleDetail
+
+// EP7-1. DELETE /api/schedules/{schedule_id}
+export interface DeleteScheduleResponse {
+  ok: boolean
+}
 
 // EP8. GET /api/calendar/conflicts
 export interface GetConflictsQuery {

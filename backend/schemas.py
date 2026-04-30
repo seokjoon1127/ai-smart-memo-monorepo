@@ -47,6 +47,7 @@ class Note(ApiModel):
     content: str = Field(..., min_length=1, max_length=2000)
     created_at: str
     indexed: bool = False
+    owner_user_id: str | None = None
 
 
 class ConflictInfo(ApiModel):
@@ -108,13 +109,23 @@ class Schedule(ApiModel):
     google_event_id: str | None = None
     source_note_id: str | None = None
     created_at: str
+    can_delete: bool = False
 
 
 class StoredSchedule(Schedule):
+    owner_user_id: str | None = None
     rag_summary: "RagSummary | None" = None
 
-    def to_public_schedule(self) -> Schedule:
-        return Schedule(**self.model_dump(exclude={"rag_summary"}))
+    def to_public_schedule(self, viewer_user_id: str | None = None) -> Schedule:
+        return Schedule(
+            **self.model_dump(
+                exclude={"owner_user_id", "rag_summary", "can_delete"},
+            ),
+            can_delete=(
+                self.owner_user_id is not None
+                and self.owner_user_id == viewer_user_id
+            ),
+        )
 
 
 class ScheduleFailure(ApiModel):

@@ -10,6 +10,7 @@ import type {
   CreateSchedulesRequest,
   CreateSchedulesResponse,
   CreateShareDocRequest,
+  DeleteScheduleResponse,
   EventType,
   GetConflictsQuery,
   GetSchedulesQuery,
@@ -289,6 +290,16 @@ export const mockApi = {
         related_docs: pickRelatedDocs(schedule),
         ai_suggestion: maybeBuildSuggestion(schedule),
       };
+    },
+
+    delete: async (id: string): Promise<DeleteScheduleResponse> => {
+      await sleep(120);
+      const index = schedulesStore.findIndex((s) => s.id === id);
+      if (index === -1) {
+        throwApiError("NOT_FOUND", "Schedule not found", { schedule_id: id });
+      }
+      schedulesStore.splice(index, 1);
+      return { ok: true };
     },
   },
 

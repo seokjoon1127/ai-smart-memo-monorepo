@@ -1,5 +1,7 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import { Loader2, Trash2 } from "lucide-react";
 import { useScheduleStore } from "@/stores/scheduleStore";
+import { useUiStore } from "@/stores/uiStore";
 import { formatDateKo, formatTimeKo } from "@/utils/date";
 import { RelatedDocCard } from "@/components/memo/RelatedDocCard";
 import { SuggestionBox } from "@/components/memo/SuggestionBox";
@@ -38,8 +40,11 @@ function timeRange(
 }
 
 export function ScheduleDetailModal({ scheduleId, onClose }: Props) {
+  const [isDeleting, setIsDeleting] = useState(false);
   const detail = useScheduleStore((s) => s.scheduleDetails[scheduleId]);
   const fetchScheduleDetail = useScheduleStore((s) => s.fetchScheduleDetail);
+  const deleteSchedule = useScheduleStore((s) => s.deleteSchedule);
+  const showToast = useUiStore((s) => s.showToast);
 
   useEffect(() => {
     void fetchScheduleDetail(scheduleId);
@@ -52,6 +57,19 @@ export function ScheduleDetailModal({ scheduleId, onClose }: Props) {
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [onClose]);
+
+  const handleDelete = async () => {
+    if (!detail?.can_delete || isDeleting) return;
+
+    setIsDeleting(true);
+    const deleted = await deleteSchedule(detail.id);
+    setIsDeleting(false);
+
+    if (!deleted) return;
+
+    showToast("일정을 삭제했어요");
+    onClose();
+  };
 
   return (
     <div
@@ -87,26 +105,44 @@ export function ScheduleDetailModal({ scheduleId, onClose }: Props) {
                   )}
                 </p>
               </div>
-              <button
-                type="button"
-                onClick={onClose}
-                className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-toss-gray-100 text-toss-gray-500"
-                aria-label="닫기"
-              >
-                <svg
-                  className="w-5 h-5"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
+              <div className="flex items-center gap-2">
+                {detail.can_delete && (
+                  <button
+                    type="button"
+                    onClick={handleDelete}
+                    disabled={isDeleting}
+                    className="h-8 w-8 flex items-center justify-center rounded-lg text-toss-gray-500 hover:bg-toss-gray-100 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-60"
+                    aria-label="일정 삭제"
+                    title="일정 삭제"
+                  >
+                    {isDeleting ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Trash2 className="h-4 w-4" />
+                    )}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-toss-gray-100 text-toss-gray-500"
+                  aria-label="닫기"
                 >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M6 18L18 6M6 6l12 12"
-                  />
-                </svg>
-              </button>
+                  <svg
+                    className="w-5 h-5"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M6 18L18 6M6 6l12 12"
+                    />
+                  </svg>
+                </button>
+              </div>
             </div>
 
             <div className="grid grid-cols-2 gap-2 mb-5">

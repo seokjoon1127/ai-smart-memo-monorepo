@@ -29,6 +29,7 @@ interface ScheduleState {
   syncGoogleCalendar: (
     scheduleId: string,
   ) => Promise<GoogleCalendarEventResponse | null>;
+  deleteSchedule: (scheduleId: string) => Promise<boolean>;
   acceptSuggestion: (
     suggestionId: string,
     alertMinutesBefore?: number,
@@ -128,6 +129,33 @@ export const useScheduleStore = create<ScheduleState>((set, get) => ({
         : "Google Calendar에 추가하지 못했어요";
       useUiStore.getState().showToast(message);
       return null;
+    }
+  },
+
+  deleteSchedule: async (scheduleId) => {
+    try {
+      await scheduleApi.delete(scheduleId);
+      set((state) => {
+        const nextDetails = { ...state.scheduleDetails };
+        delete nextDetails[scheduleId];
+
+        return {
+          schedules: state.schedules.filter(
+            (schedule) => schedule.id !== scheduleId,
+          ),
+          calendarEvents: state.calendarEvents.filter(
+            (schedule) => schedule.id !== scheduleId,
+          ),
+          scheduleDetails: nextDetails,
+        };
+      });
+      return true;
+    } catch (error) {
+      const message = isApiError(error)
+        ? error.error.message
+        : "일정을 삭제하지 못했어요";
+      useUiStore.getState().showToast(message);
+      return false;
     }
   },
 

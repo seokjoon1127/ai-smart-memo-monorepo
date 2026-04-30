@@ -46,6 +46,23 @@ def ensure_storage() -> None: # 스토리지 폴더와 파일이 없으면 생�
     if not ID_MAP_PATH.exists():
         ID_MAP_PATH.write_text("[]", encoding="utf-8")
 
+    _restore_seed_file_if_empty(NOTES_PATH, SEED_NOTES_PATH)
+    _restore_seed_file_if_empty(SCHEDULES_PATH, SEED_SCHEDULES_PATH)
+    _restore_seed_file_if_empty(SHARE_DOCS_PATH, SEED_SHARE_DOCS_PATH)
+
+
+def _restore_seed_file_if_empty(target_path: Path, seed_path: Path) -> None:
+    if not seed_path.exists():
+        return
+
+    raw_text = target_path.read_text(encoding="utf-8").strip()
+    if raw_text and raw_text != "[]":
+        return
+
+    seed_text = seed_path.read_text(encoding="utf-8")
+    if seed_text.strip():
+        target_path.write_text(seed_text, encoding="utf-8")
+
 
 def _read_json_list(path: Path) -> list[dict]: # json 파일 읽어서 python list로 반환
     ensure_storage()
@@ -86,17 +103,38 @@ def load_google_tokens() -> list[GoogleToken]:
 def save_google_tokens(google_tokens: Sequence[GoogleToken]) -> None:
     _write_json(GOOGLE_TOKENS_PATH, [google_token.model_dump(mode="json") for google_token in google_tokens])
 
-def list_notes() -> list[Note]: # 최신순으로 정렬
-    return sorted(load_notes(), key=lambda note: note.created_at, reverse=True)
+def list_notes(owner_user_id: str | None = None) -> list[Note]: # 최신순으로 정렬
+    notes = [
+        note
+        for note in load_notes()
+        if _is_visible_owner(note.owner_user_id, owner_user_id)
+    ]
+    return sorted(notes, key=lambda note: note.created_at, reverse=True)
 
 
-def get_note(note_id: str) -> Note | None:
-    return next((note for note in load_notes() if note.id == note_id), None)
+def get_note(note_id: str, owner_user_id: str | None = None) -> Note | None:
+    return next(
+        (
+            note
+            for note in load_notes()
+            if note.id == note_id
+            and _is_visible_owner(note.owner_user_id, owner_user_id)
+        ),
+        None,
+    )
 
 
-def delete_note(note_id: str) -> bool:
+def delete_note(note_id: str, owner_user_id: str) -> bool:
     notes = load_notes()
-    filtered = [note for note in notes if note.id != note_id]
+    filtered = [
+        note
+        for note in notes
+        if not (
+            note.id == note_id
+            and note.owner_user_id is not None
+            and note.owner_user_id == owner_user_id
+        )
+    ]
 
     if len(filtered) == len(notes):
         return False
@@ -106,7 +144,10 @@ def delete_note(note_id: str) -> bool:
     schedules = load_schedules()
     changed = False
     for schedule in schedules:
-        if schedule.source_note_id == note_id:
+        if (
+            schedule.source_note_id == note_id
+            and schedule.owner_user_id == owner_user_id
+        ):
             schedule.source_note_id = None
             changed = True
 
@@ -126,7 +167,10 @@ def load_schedules() -> list[StoredSchedule]:
 def save_schedules(schedules: Sequence[StoredSchedule]) -> None:
     _write_json(
         SCHEDULES_PATH,
-        [schedule.model_dump(mode="json") for schedule in schedules],
+        [
+            schedule.model_dump(mode="json", exclude={"can_delete"})
+            for schedule in schedules
+        ],
     )
 
 
@@ -135,8 +179,14 @@ def list_schedules(
     from_date: str | None = None,
     to_date: str | None = None,
     event_type: str | None = None,
+    owner_user_id: str | None = None,
 ) -> list[StoredSchedule]:
     schedules = load_schedules()
+    schedules = [
+        schedule
+        for schedule in schedules
+        if _is_visible_owner(schedule.owner_user_id, owner_user_id)
+    ]
 
     if from_date is not None:
         schedules = [schedule for schedule in schedules if schedule.date >= from_date]
@@ -164,6 +214,39 @@ def get_schedule(schedule_id: str) -> StoredSchedule | None:
     )
 
 
+def get_visible_schedule(
+    schedule_id: str,
+    owner_user_id: str | None,
+) -> StoredSchedule | None:
+    schedule = get_schedule(schedule_id)
+    if schedule is None:
+        return None
+
+    if not _is_visible_owner(schedule.owner_user_id, owner_user_id):
+        return None
+
+    return schedule
+
+
+def delete_schedule(schedule_id: str, owner_user_id: str) -> bool:
+    schedules = load_schedules()
+    next_schedules = [
+        schedule
+        for schedule in schedules
+        if not (
+            schedule.id == schedule_id
+            and schedule.owner_user_id is not None
+            and schedule.owner_user_id == owner_user_id
+        )
+    ]
+
+    if len(next_schedules) == len(schedules):
+        return False
+
+    save_schedules(next_schedules)
+    return True
+
+
 def replace_schedule(updated_schedule: StoredSchedule) -> None:
     schedules = load_schedules()
     replaced = False
@@ -178,6 +261,13 @@ def replace_schedule(updated_schedule: StoredSchedule) -> None:
 
     if replaced:
         save_schedules(next_schedules)
+
+
+def _is_visible_owner(
+    resource_owner_user_id: str | None,
+    viewer_user_id: str | None,
+) -> bool:
+    return resource_owner_user_id is None or resource_owner_user_id == viewer_user_id
 
 
 def invalidate_rag_summary_cache() -> None:
@@ -268,21 +358,32 @@ def _create_next_id(prefix: str, values: Sequence[str]) -> str:
 def reset_to_seed() -> dict[str, int]:
     ensure_storage()
 
-    pairs = (
-        (SEED_NOTES_PATH, NOTES_PATH, "notes"),
-        (SEED_SCHEDULES_PATH, SCHEDULES_PATH, "schedules"),
-        (SEED_SHARE_DOCS_PATH, SHARE_DOCS_PATH, "share_docs"),
-    )
-
     counts: dict[str, int] = {}
-    for seed_path, target_path, label in pairs:
-        if seed_path.exists():
-            payload = seed_path.read_text(encoding="utf-8")
-        else:
-            payload = "[]"
 
-        target_path.write_text(payload, encoding="utf-8")
-        counts[label] = len(json.loads(payload) or [])
+    seed_notes = _read_seed_models(SEED_NOTES_PATH, Note)
+    personal_notes = [
+        note
+        for note in load_notes()
+        if _is_persistent_personal_owner(note.owner_user_id)
+    ]
+    save_notes([*seed_notes, *personal_notes])
+    counts["notes"] = len(seed_notes) + len(personal_notes)
+
+    seed_schedules = _read_seed_models(SEED_SCHEDULES_PATH, StoredSchedule)
+    personal_schedules = [
+        schedule
+        for schedule in load_schedules()
+        if _is_persistent_personal_owner(schedule.owner_user_id)
+    ]
+    save_schedules([*seed_schedules, *personal_schedules])
+    counts["schedules"] = len(seed_schedules) + len(personal_schedules)
+
+    if SEED_SHARE_DOCS_PATH.exists():
+        payload = SEED_SHARE_DOCS_PATH.read_text(encoding="utf-8")
+    else:
+        payload = "[]"
+    SHARE_DOCS_PATH.write_text(payload, encoding="utf-8")
+    counts["share_docs"] = len(json.loads(payload) or [])
 
     if INDEX_PATH.exists():
         INDEX_PATH.unlink()
@@ -296,6 +397,25 @@ def reset_to_seed() -> dict[str, int]:
         save_share_docs(updated)
 
     return counts
+
+
+def _read_seed_models(path: Path, model: type[Note] | type[StoredSchedule]):
+    if not path.exists():
+        return []
+
+    raw_text = path.read_text(encoding="utf-8").strip()
+    if not raw_text:
+        return []
+
+    data = json.loads(raw_text)
+    if not isinstance(data, list):
+        raise ValueError(f"{path.name} must contain a JSON array")
+
+    return [model.model_validate(item) for item in data]
+
+
+def _is_persistent_personal_owner(owner_user_id: str | None) -> bool:
+    return owner_user_id is not None and not owner_user_id.startswith("guest_")
 
 def get_user_by_google_sub(google_sub: str) -> User | None:
     return next(

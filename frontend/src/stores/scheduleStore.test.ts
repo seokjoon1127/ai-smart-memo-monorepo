@@ -6,6 +6,7 @@ vi.mock("@/services", () => ({
     create: vi.fn(),
     list: vi.fn(),
     getDetail: vi.fn(),
+    delete: vi.fn(),
   },
   calendarApi: {
     createGoogleEvent: vi.fn(),
@@ -169,6 +170,46 @@ describe("scheduleStore.syncGoogleCalendar", () => {
 
     expect(result).toBe(null);
     expect(useUiStore.getState().toastMessage).toBe("Google 권한이 필요해요");
+  });
+});
+
+describe("scheduleStore.deleteSchedule", () => {
+  it("성공: 일정 목록과 상세 캐시에서 제거함", async () => {
+    const detail: ScheduleDetail = {
+      ...sampleSchedule,
+      related_docs: [],
+      ai_suggestion: null,
+    };
+    useScheduleStore.setState({
+      schedules: [sampleSchedule],
+      calendarEvents: [sampleSchedule],
+      scheduleDetails: { [sampleSchedule.id]: detail },
+    });
+    vi.mocked(scheduleApi.delete).mockResolvedValue({ ok: true });
+
+    const result = await useScheduleStore
+      .getState()
+      .deleteSchedule(sampleSchedule.id);
+
+    expect(result).toBe(true);
+    expect(useScheduleStore.getState().schedules).toHaveLength(0);
+    expect(useScheduleStore.getState().calendarEvents).toHaveLength(0);
+    expect(useScheduleStore.getState().scheduleDetails[sampleSchedule.id]).toBe(
+      undefined,
+    );
+  });
+
+  it("실패: false 반환, 토스트 노출", async () => {
+    vi.mocked(scheduleApi.delete).mockRejectedValue({
+      error: { code: "NOT_FOUND", message: "Schedule not found" },
+    });
+
+    const result = await useScheduleStore
+      .getState()
+      .deleteSchedule("sch_404");
+
+    expect(result).toBe(false);
+    expect(useUiStore.getState().toastMessage).toBe("Schedule not found");
   });
 });
 

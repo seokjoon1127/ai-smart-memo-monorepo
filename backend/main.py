@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import secrets
 import sys
 import traceback
 import requests
@@ -67,9 +68,10 @@ from services.db_handler import (
     create_note_id,
     create_schedule_id,
     create_share_doc_id,
+    delete_schedule,
     delete_note,
     get_note,
-    get_schedule,
+    get_visible_schedule,
     get_share_doc,
     list_notes,
     list_schedules,
@@ -109,6 +111,7 @@ IS_PRODUCTION = os.getenv("ENV", "development") == "production"
 SESSION_VERSION = 2
 SESSION_COOKIE_NAME = "__session"
 LEGACY_SESSION_COOKIE_NAME = "session"
+GUEST_OWNER_SESSION_KEY = "guest_owner_user_id"
 SESSION_COOKIE_SAMESITE = "none" if IS_PRODUCTION else "lax"
 SESSION_COOKIE_SECURE = IS_PRODUCTION
 
@@ -138,7 +141,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-SuggestionCacheValue = tuple[Suggestion, datetime]
+SuggestionCacheValue = tuple[Suggestion, datetime, str | None]
 SUGGESTION_CACHE: dict[str, SuggestionCacheValue] = {}
 SUGGESTION_SEQUENCE = 0
 
@@ -207,19 +210,22 @@ def api_root() -> dict[str, str]:
 
 
 @app.get("/api/notes", response_model=list[Note])
-def get_notes() -> list[Note]:
-    return list_notes()
+def get_notes(request: Request) -> list[Note]:
+    owner_user_id = _get_request_viewer_user_id(request)
+    return list_notes(owner_user_id=owner_user_id)
 
 
 @app.post("/api/notes", response_model=Note, status_code=status.HTTP_201_CREATED)
-def create_note(payload: CreateNoteRequest) -> Note:
+def create_note(payload: CreateNoteRequest, request: Request) -> Note:
     notes = load_notes()
+    owner_user_id = _get_request_data_owner_id(request)
 
     note = Note(
         id=create_note_id(notes),
         content=payload.content.strip(),
         created_at=_now_iso(),
         indexed=True,
+        owner_user_id=owner_user_id,
     )
 
     notes.append(note)
@@ -229,8 +235,16 @@ def create_note(payload: CreateNoteRequest) -> Note:
 
 
 @app.delete("/api/notes/{note_id}")
-def remove_note(note_id: str) -> dict[str, bool]:
-    deleted = delete_note(note_id)
+def remove_note(note_id: str, request: Request) -> dict[str, bool]:
+    owner_user_id = _get_request_viewer_user_id(request)
+    if owner_user_id is None:
+        raise ApiException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            code="INVALID_REQUEST",
+            message="Not authenticated",
+        )
+
+    deleted = delete_note(note_id, owner_user_id=owner_user_id)
 
     if not deleted:
         raise ApiException(
@@ -244,8 +258,9 @@ def remove_note(note_id: str) -> dict[str, bool]:
 
 
 @app.post("/api/parse", response_model=ParseResponse)
-def parse_note(payload: ParseRequest) -> ParseResponse:
-    note = get_note(payload.note_id)
+def parse_note(payload: ParseRequest, request: Request) -> ParseResponse:
+    owner_user_id = _get_request_viewer_user_id(request)
+    note = get_note(payload.note_id, owner_user_id=owner_user_id)
 
     if note is None:
         raise ApiException(
@@ -276,7 +291,7 @@ def parse_note(payload: ParseRequest) -> ParseResponse:
             message="Failed to parse memo",
         ) from exc
 
-    schedules = load_schedules()
+    schedules = list_schedules(owner_user_id=owner_user_id)
     parsed_events: list[ParsedEvent] = []
 
     for index, event in enumerate(extracted_events, start=1):
@@ -318,13 +333,27 @@ def parse_note(payload: ParseRequest) -> ParseResponse:
     response_model=CreateSchedulesResponse,
     status_code=status.HTTP_201_CREATED,
 )
-def create_schedules(payload: CreateSchedulesRequest) -> CreateSchedulesResponse:
+def create_schedules(
+    payload: CreateSchedulesRequest,
+    request: Request,
+) -> CreateSchedulesResponse:
     schedules = load_schedules()
+    owner_user_id = _get_request_data_owner_id(request)
     created: list[Schedule] = []
     failed: list[ScheduleFailure] = []
 
     for event in payload.events:
         _validate_schedule_event(event_date=event.date, start_time=event.start_time, end_time=event.end_time, is_all_day=event.is_all_day)
+        if (
+            event.source_note_id is not None
+            and get_note(event.source_note_id, owner_user_id=owner_user_id) is None
+        ):
+            raise ApiException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                code="NOT_FOUND",
+                message="Source note not found",
+                detail={"note_id": event.source_note_id},
+            )
 
         schedule_id = create_schedule_id(schedules)
 
@@ -342,11 +371,12 @@ def create_schedules(payload: CreateSchedulesRequest) -> CreateSchedulesResponse
             google_event_id=None,
             source_note_id=event.source_note_id,
             created_at=_now_iso(),
+            owner_user_id=owner_user_id,
             rag_summary=None,
         )
 
         schedules.append(stored)
-        created.append(stored.to_public_schedule())
+        created.append(stored.to_public_schedule(owner_user_id))
 
     save_schedules(schedules)
 
@@ -355,10 +385,12 @@ def create_schedules(payload: CreateSchedulesRequest) -> CreateSchedulesResponse
 
 @app.get("/api/schedules", response_model=list[Schedule])
 def get_schedules(
+    request: Request,
     from_date: str = Query(..., alias="from"),
     to_date: str = Query(..., alias="to"),
     event_type: EventType | None = Query(default=None, alias="type"),
 ) -> list[Schedule]:
+    owner_user_id = _get_request_viewer_user_id(request)
     _validate_date(from_date, "from")
     _validate_date(to_date, "to")
 
@@ -374,14 +406,58 @@ def get_schedules(
         from_date=from_date,
         to_date=to_date,
         event_type=event_type,
+        owner_user_id=owner_user_id,
     )
 
-    return [schedule.to_public_schedule() for schedule in schedules]
+    return [schedule.to_public_schedule(owner_user_id) for schedule in schedules]
+
+
+@app.delete("/api/schedules/{schedule_id}")
+def remove_schedule(schedule_id: str, request: Request) -> dict[str, bool]:
+    owner_user_id = _get_request_viewer_user_id(request)
+    if owner_user_id is None:
+        raise ApiException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            code="INVALID_REQUEST",
+            message="Not authenticated",
+        )
+
+    visible_schedule = get_visible_schedule(
+        schedule_id,
+        owner_user_id=owner_user_id,
+    )
+    if visible_schedule is None:
+        raise ApiException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            code="NOT_FOUND",
+            message="Schedule not found",
+            detail={"schedule_id": schedule_id},
+        )
+
+    if visible_schedule.owner_user_id is None:
+        raise ApiException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            code="INVALID_REQUEST",
+            message="Seed schedules cannot be deleted",
+            detail={"schedule_id": schedule_id},
+        )
+
+    deleted = delete_schedule(schedule_id, owner_user_id=owner_user_id)
+    if not deleted:
+        raise ApiException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            code="NOT_FOUND",
+            message="Schedule not found",
+            detail={"schedule_id": schedule_id},
+        )
+
+    return {"ok": True}
 
 
 @app.get("/api/schedules/{schedule_id}", response_model=ScheduleDetail)
-def get_schedule_detail(schedule_id: str) -> ScheduleDetail:
-    stored = get_schedule(schedule_id)
+def get_schedule_detail(schedule_id: str, request: Request) -> ScheduleDetail:
+    owner_user_id = _get_request_viewer_user_id(request)
+    stored = get_visible_schedule(schedule_id, owner_user_id=owner_user_id)
 
     if stored is None:
         raise ApiException(
@@ -391,7 +467,7 @@ def get_schedule_detail(schedule_id: str) -> ScheduleDetail:
             detail={"schedule_id": schedule_id},
         )
 
-    schedule = stored.to_public_schedule()
+    schedule = stored.to_public_schedule(owner_user_id)
     docs = load_share_docs()
 
     related_docs = search_related_share_docs(schedule=schedule, docs=docs)
@@ -405,7 +481,7 @@ def get_schedule_detail(schedule_id: str) -> ScheduleDetail:
             suggestion_id=suggestion_id,
         )
         if ai_suggestion is not None:
-            _save_suggestion(ai_suggestion)
+            _save_suggestion(ai_suggestion, owner_user_id)
 
     return ScheduleDetail(
         **schedule.model_dump(),
@@ -416,10 +492,12 @@ def get_schedule_detail(schedule_id: str) -> ScheduleDetail:
 
 @app.get("/api/calendar/conflicts", response_model=ConflictInfo)
 def get_calendar_conflicts(
+    request: Request,
     date: str = Query(...),
     start_time: str | None = Query(default=None),
     end_time: str | None = Query(default=None),
 ) -> ConflictInfo:
+    owner_user_id = _get_request_viewer_user_id(request)
     _validate_date(date, "date")
     _validate_optional_time(start_time, "start_time")
     _validate_optional_time(end_time, "end_time")
@@ -429,7 +507,7 @@ def get_calendar_conflicts(
             date=date,
             start_time=start_time,
             end_time=end_time,
-            schedules=load_schedules(),
+            schedules=list_schedules(owner_user_id=owner_user_id),
             assume_default_duration=False,
         )
     except ValueError as exc:
@@ -518,7 +596,7 @@ def create_google_calendar_event(
     request: Request,
 ) -> GoogleCalendarEventResponse:
     user_id = _require_session_user_id(request)
-    schedule = get_schedule(payload.schedule_id)
+    schedule = get_visible_schedule(payload.schedule_id, owner_user_id=user_id)
 
     if schedule is None:
         raise ApiException(
@@ -528,10 +606,18 @@ def create_google_calendar_event(
             detail={"schedule_id": payload.schedule_id},
         )
 
+    if schedule.owner_user_id != user_id:
+        raise ApiException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            code="INVALID_REQUEST",
+            message="Only personal schedules can be added to Google Calendar",
+            detail={"schedule_id": payload.schedule_id},
+        )
+
     existing_google_event_id = schedule.google_event_id
     if existing_google_event_id and not existing_google_event_id.startswith("mock_"):
         return GoogleCalendarEventResponse(
-            schedule=schedule.to_public_schedule(),
+            schedule=schedule.to_public_schedule(user_id),
             google_event_id=existing_google_event_id,
             html_link=None,
         )
@@ -565,7 +651,7 @@ def create_google_calendar_event(
 
     html_link = google_event.get("htmlLink")
     return GoogleCalendarEventResponse(
-        schedule=schedule.to_public_schedule(),
+        schedule=schedule.to_public_schedule(user_id),
         google_event_id=google_event_id,
         html_link=html_link if isinstance(html_link, str) else None,
     )
@@ -575,8 +661,10 @@ def create_google_calendar_event(
 def accept_suggestion(
     suggestion_id: str,
     payload: AcceptSuggestionRequest,
+    request: Request,
 ) -> Schedule:
-    suggestion = _pop_suggestion(suggestion_id)
+    owner_user_id = _get_request_data_owner_id(request)
+    suggestion = _pop_suggestion(suggestion_id, owner_user_id)
 
     if suggestion is None:
         raise ApiException(
@@ -603,13 +691,14 @@ def accept_suggestion(
         google_event_id=None,
         source_note_id=None,
         created_at=_now_iso(),
+        owner_user_id=owner_user_id,
         rag_summary=None,
     )
 
     schedules.append(stored)
     save_schedules(schedules)
 
-    return stored.to_public_schedule()
+    return stored.to_public_schedule(owner_user_id)
 
 @app.get("/api/auth/me", response_model=AuthResponse)
 def get_current_user(request: Request, response: Response) -> AuthResponse:
@@ -775,6 +864,34 @@ def _require_session_user_id(request: Request) -> str:
 
     return user_id
 
+def _get_request_viewer_user_id(request: Request) -> str | None:
+    user_id = _get_session_user_id(request)
+    if user_id is not None:
+        return user_id
+
+    guest_owner_user_id = request.session.get(GUEST_OWNER_SESSION_KEY)
+    if isinstance(guest_owner_user_id, str) and guest_owner_user_id:
+        return guest_owner_user_id
+
+    return None
+
+def _get_request_data_owner_id(request: Request) -> str:
+    user_id = _get_session_user_id(request)
+    if user_id is not None:
+        return user_id
+
+    if not _has_current_session_version(request):
+        request.session.clear()
+        request.session["session_version"] = SESSION_VERSION
+
+    guest_owner_user_id = request.session.get(GUEST_OWNER_SESSION_KEY)
+    if isinstance(guest_owner_user_id, str) and guest_owner_user_id:
+        return guest_owner_user_id
+
+    guest_owner_user_id = f"guest_{secrets.token_urlsafe(16)}"
+    request.session[GUEST_OWNER_SESSION_KEY] = guest_owner_user_id
+    return guest_owner_user_id
+
 def _has_current_session_version(request: Request) -> bool:
     return request.session.get("session_version") == SESSION_VERSION
 
@@ -899,22 +1016,36 @@ def _create_suggestion_id() -> str:
     return f"sug_{SUGGESTION_SEQUENCE:03d}"
 
 
-def _save_suggestion(suggestion: Suggestion) -> None:
+def _save_suggestion(
+    suggestion: Suggestion,
+    owner_user_id: str | None,
+) -> None:
     expires_at = datetime.now(KST) + SUGGESTION_TTL
-    SUGGESTION_CACHE[suggestion.suggestion_id] = (suggestion, expires_at)
+    SUGGESTION_CACHE[suggestion.suggestion_id] = (
+        suggestion,
+        expires_at,
+        owner_user_id,
+    )
 
 
-def _pop_suggestion(suggestion_id: str) -> Suggestion | None:
+def _pop_suggestion(
+    suggestion_id: str,
+    owner_user_id: str | None,
+) -> Suggestion | None:
     _cleanup_expired_suggestions()
 
-    cached = SUGGESTION_CACHE.pop(suggestion_id, None)
+    cached = SUGGESTION_CACHE.get(suggestion_id)
     if cached is None:
         return None
 
-    suggestion, expires_at = cached
+    suggestion, expires_at, cached_owner_user_id = cached
     if expires_at < datetime.now(KST):
+        SUGGESTION_CACHE.pop(suggestion_id, None)
+        return None
+    if cached_owner_user_id != owner_user_id:
         return None
 
+    SUGGESTION_CACHE.pop(suggestion_id, None)
     return suggestion
 
 
@@ -922,7 +1053,7 @@ def _cleanup_expired_suggestions() -> None:
     now = datetime.now(KST)
     expired_ids = [
         suggestion_id
-        for suggestion_id, (_, expires_at) in SUGGESTION_CACHE.items()
+        for suggestion_id, (_, expires_at, _) in SUGGESTION_CACHE.items()
         if expires_at < now
     ]
 

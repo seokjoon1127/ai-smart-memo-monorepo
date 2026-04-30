@@ -13,6 +13,7 @@ describe('mockApi structure', () => {
     expect(typeof mockApi.schedule.create).toBe('function')
     expect(typeof mockApi.schedule.list).toBe('function')
     expect(typeof mockApi.schedule.getDetail).toBe('function')
+    expect(typeof mockApi.schedule.delete).toBe('function')
   })
 
   it('exposes calendar namespace', () => {
