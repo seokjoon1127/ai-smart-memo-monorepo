@@ -105,6 +105,7 @@ GOOGLE_CALENDAR_EVENTS_URL = (
 GOOGLE_OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token"
 TOKEN_REFRESH_GRACE_SECONDS = 60
 GOOGLE_CALENDAR_INSERT_ATTEMPTS = 3
+GOOGLE_CALENDAR_MAX_REMINDER_MINUTES = 40320
 GOOGLE_CALENDAR_RETRY_STATUSES = {
     status.HTTP_429_TOO_MANY_REQUESTS,
     status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -1249,16 +1250,64 @@ def _insert_google_calendar_event(
         )
 
     if response.status_code >= 400:
+        google_error_detail = _google_error_detail(response)
+        logger.warning(
+            "Google Calendar insert failed: %s",
+            google_error_detail,
+        )
         raise ApiException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             code="EXTERNAL_SERVICE_UNAVAILABLE",
-            message="Failed to create Google Calendar event",
-            detail={"status": response.status_code},
+            message=_google_error_message(google_error_detail),
+            detail=google_error_detail,
         )
 
     return response.json()
 
+def _google_error_detail(response: requests.Response) -> dict[str, Any]:
+    detail: dict[str, Any] = {"status": response.status_code}
+
+    try:
+        payload = response.json()
+    except ValueError:
+        if response.text:
+            detail["body"] = response.text[:500]
+        return detail
+
+    if isinstance(payload, dict):
+        error = payload.get("error")
+        if isinstance(error, dict):
+            message = error.get("message")
+            if isinstance(message, str) and message:
+                detail["message"] = message
+
+            errors = error.get("errors")
+            if isinstance(errors, list) and errors:
+                first_error = errors[0]
+                if isinstance(first_error, dict):
+                    reason = first_error.get("reason")
+                    if isinstance(reason, str) and reason:
+                        detail["reason"] = reason
+                    item_message = first_error.get("message")
+                    if isinstance(item_message, str) and item_message:
+                        detail["item_message"] = item_message
+            return detail
+
+    detail["body"] = payload
+    return detail
+
+def _google_error_message(detail: dict[str, Any]) -> str:
+    message = detail.get("item_message") or detail.get("message")
+    if isinstance(message, str) and message:
+        return f"Google Calendar event was rejected: {message}"
+
+    return "Failed to create Google Calendar event"
+
 def _build_google_calendar_event_payload(schedule: StoredSchedule) -> dict[str, Any]:
+    reminder_minutes = min(
+        schedule.alert_minutes_before,
+        GOOGLE_CALENDAR_MAX_REMINDER_MINUTES,
+    )
     payload: dict[str, Any] = {
         "summary": schedule.title,
         "reminders": {
@@ -1266,7 +1315,7 @@ def _build_google_calendar_event_payload(schedule: StoredSchedule) -> dict[str, 
             "overrides": [
                 {
                     "method": "popup",
-                    "minutes": schedule.alert_minutes_before,
+                    "minutes": reminder_minutes,
                 }
             ],
         },
