@@ -100,6 +100,7 @@ app = FastAPI(title="AI Smart Memo Backend", version="1.0.0")
 app.add_middleware(
     SessionMiddleware,
     secret_key=SESSION_SECRET,
+    session_cookie="__session",
     same_site="none" if IS_PRODUCTION else "lax",
     https_only=IS_PRODUCTION,
 )
@@ -649,11 +650,10 @@ def login_with_google_code(
     )
 
     request.session["user_id"] = user.id
-    request.session["user"] = _auth_user_from_user(user).model_dump(mode="json")
+    auth_user = _auth_user_from_user(user)
+    request.session["user"] = auth_user.model_dump(mode="json")
 
-    return AuthResponse(
-        user=_auth_user_from_user(user)
-    )
+    return AuthResponse(user=auth_user)
 
 
 def _now_iso() -> str:
