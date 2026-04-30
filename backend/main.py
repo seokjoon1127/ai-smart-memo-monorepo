@@ -17,7 +17,7 @@ logger = logging.getLogger("ai_smart_memo")
 logger.setLevel(logging.DEBUG)
 
 from dotenv import load_dotenv
-from fastapi import BackgroundTasks, FastAPI, Query, Request, status
+from fastapi import BackgroundTasks, FastAPI, Query, Request, Response, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -94,15 +94,19 @@ GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
 SESSION_SECRET = os.getenv("SESSION_SECRET", "dev-session-secret")
 IS_PRODUCTION = os.getenv("ENV", "development") == "production"
+SESSION_COOKIE_NAME = "__session"
+LEGACY_SESSION_COOKIE_NAME = "session"
+SESSION_COOKIE_SAMESITE = "none" if IS_PRODUCTION else "lax"
+SESSION_COOKIE_SECURE = IS_PRODUCTION
 
 app = FastAPI(title="AI Smart Memo Backend", version="1.0.0")
 
 app.add_middleware(
     SessionMiddleware,
     secret_key=SESSION_SECRET,
-    session_cookie="__session",
-    same_site="none" if IS_PRODUCTION else "lax",
-    https_only=IS_PRODUCTION,
+    session_cookie=SESSION_COOKIE_NAME,
+    same_site=SESSION_COOKIE_SAMESITE,
+    https_only=SESSION_COOKIE_SECURE,
 )
 
 
@@ -547,7 +551,7 @@ def accept_suggestion(
     return stored.to_public_schedule()
 
 @app.get("/api/auth/me", response_model=AuthResponse)
-def get_current_user(request: Request) -> AuthResponse:
+def get_current_user(request: Request, response: Response) -> AuthResponse:
     user_id = _get_session_user_id(request)
 
     if user_id is None:
@@ -559,7 +563,9 @@ def get_current_user(request: Request) -> AuthResponse:
 
     user = get_user_by_id(user_id)
 
-    if user is None:
+    if user is not None:
+        auth_user = _auth_user_from_user(user)
+    else:
         session_user = _get_session_user(request)
         if session_user is None:
             request.session.clear()
@@ -569,26 +575,22 @@ def get_current_user(request: Request) -> AuthResponse:
                 message="Not authenticated",
             )
 
-        return AuthResponse(user=session_user)
+        auth_user = session_user
 
-    return AuthResponse(
-        user=AuthUser(
-            id=user.id,
-            email=user.email,
-            name=user.name,
-            onboarding_completed=user.onboarding_completed,
-        )
-    )
+    _delete_legacy_session_cookie(response)
+    return AuthResponse(user=auth_user)
 
 @app.post("/api/auth/logout")
-def logout(request: Request) -> dict[str, bool]:
+def logout(request: Request, response: Response) -> dict[str, bool]:
     request.session.clear()
+    _delete_legacy_session_cookie(response)
     return {"ok": True}
 
 @app.post("/api/auth/google/code", response_model=AuthResponse)
 def login_with_google_code(
     payload: GoogleAuthCodeRequest,
     request: Request,
+    response: Response,
 ) -> AuthResponse:
     token_response = _exchange_google_code(payload.code)
 
@@ -653,6 +655,7 @@ def login_with_google_code(
     auth_user = _auth_user_from_user(user)
     request.session["user"] = auth_user.model_dump(mode="json")
 
+    _delete_legacy_session_cookie(response)
     return AuthResponse(user=auth_user)
 
 
@@ -681,6 +684,18 @@ def _error_response(
 
 def _get_session_user_id(request: Request) -> str | None:
     return request.session.get("user_id")
+
+def _delete_legacy_session_cookie(response: Response) -> None:
+    _delete_cookie(response, LEGACY_SESSION_COOKIE_NAME)
+
+def _delete_cookie(response: Response, cookie_name: str) -> None:
+    response.delete_cookie(
+        key=cookie_name,
+        path="/",
+        secure=SESSION_COOKIE_SECURE,
+        httponly=True,
+        samesite=SESSION_COOKIE_SAMESITE,
+    )
 
 def _get_session_user(request: Request) -> AuthUser | None:
     raw_user = request.session.get("user")
